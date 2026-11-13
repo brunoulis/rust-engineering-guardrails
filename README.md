@@ -4,7 +4,7 @@ Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. 
 
 ## Install
 
-Unzip into a project skill directory, for example `.agents/skills/`, so that `SKILL.md` is at `.agents/skills/rust-engineering-guardrails/SKILL.md`. You need a stable Rust toolchain (MSRV 1.75); `clippy` and `cargo-llvm-lines` are optional.
+Unzip into a project skill directory, for example `.agents/skills/`, so that `SKILL.md` is at `.agents/skills/rust-engineering-guardrails/SKILL.md`. You need a stable Rust toolchain (MSRV 1.96); `clippy` and `cargo-llvm-lines` are optional.
 
 ```bash
 cargo install --path tools/rust-guardrails          # or: cargo run --release --manifest-path tools/rust-guardrails/Cargo.toml -- ...
