@@ -1,0 +1,9 @@
+# Cargo build output
+/tools/rust-guardrails/target/
+/tools/rust-guardrails/tests/fixtures/sample/target/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

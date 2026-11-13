@@ -1,0 +1,23 @@
+[package]
+name = "rust-guardrails"
+version = "1.0.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Read-only Rust auditor: syntactic scan, cargo metadata, clippy, llvm-lines and benchmark comparison, with a prioritized refactoring plan"
+publish = false
+
+[features]
+# `ast` enables the syn-based syntactic engine. It is on by default because it removes
+# most string/comment/test-code false positives. Build with `--no-default-features`
+# for the zero-dependency heuristic core.
+default = ["ast"]
+ast = ["dep:syn", "dep:proc-macro2"]
+
+[dependencies]
+# syn 2 is pinned deliberately: its API is well known and it parses current stable syntax.
+# Files it cannot parse fall back to the heuristic engine and are reported as such.
+syn = { version = "2", optional = true, default-features = false, features = ["full", "visit", "parsing", "printing"] }
+proc-macro2 = { version = "1", optional = true, default-features = false, features = ["span-locations"] }
+
+[profile.release]
+codegen-units = 1
