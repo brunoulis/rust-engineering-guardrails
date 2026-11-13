@@ -4,6 +4,7 @@ version = "1.0.0"
 edition = "2021"
 rust-version = "1.75"
 description = "Read-only Rust auditor: syntactic scan, cargo metadata, clippy, llvm-lines and benchmark comparison, with a prioritized refactoring plan"
+license = "MIT"
 publish = false
 
 [features]

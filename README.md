@@ -80,3 +80,7 @@ Run on Windows 11 with Rust 1.96.0 and clippy 0.1.96:
 ## References
 
 Read `SKILL.md`, then only the reference you need: `references/refactoring.md` for code quality, `references/crate-boundaries.md` for crate decisions, `references/type-safety.md` for typestate/newtypes, `references/async-reliability.md` for cancellation and backpressure, `references/performance.md` for benchmarks. Record decisions with `templates/refactor-plan.md` and `templates/crate-decision.md`; `rust-guardrails report --format markdown` gives you the evidence and verification steps to fill them.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
