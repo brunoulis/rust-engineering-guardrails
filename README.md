@@ -4,11 +4,13 @@ Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. 
 
 ## Install
 
-Unzip into a project skill directory, for example `.agents/skills/`, so that `SKILL.md` is at `.agents/skills/rust-engineering-guardrails/SKILL.md`. You need a stable Rust toolchain (MSRV 1.96); `clippy` and `cargo-llvm-lines` are optional.
+See [INSTALL.md](INSTALL.md) for Codex, Claude Code and Hermes setup, local/personal scope, the skills CLI and discovery checks. Unzip the complete skill into the selected directory so that `SKILL.md` is directly inside `rust-engineering-guardrails/`.
+
+The instructions do not require Rust to be installed. To build the optional auditor, use a compatible stable Rust toolchain (MSRV 1.96); `clippy` and `cargo-llvm-lines` are optional. From the skill root, the following explicitly installs a binary into Cargo's bin directory (use the local build/run alternative in INSTALL.md if preferred):
 
 ```bash
-cargo install --path tools/rust-guardrails          # or: cargo run --release --manifest-path tools/rust-guardrails/Cargo.toml -- ...
-cargo test --manifest-path tools/rust-guardrails/Cargo.toml
+cargo install --path tools/rust-guardrails --locked
+cargo test --manifest-path tools/rust-guardrails/Cargo.toml --locked
 ```
 
 ## One audit, one report
@@ -81,6 +83,10 @@ Run on Windows 11 with Rust 1.96.0 and clippy 0.1.96:
 ## References
 
 Read `SKILL.md`, then only the reference you need: `references/refactoring.md` for code quality, `references/crate-boundaries.md` for crate decisions, `references/type-safety.md` for typestate/newtypes, `references/async-reliability.md` for cancellation and backpressure, `references/performance.md` for benchmarks. Record decisions with `templates/refactor-plan.md` and `templates/crate-decision.md`; `rust-guardrails report --format markdown` gives you the evidence and verification steps to fill them.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for reproducible problems, valid counterexamples, positive/negative tests, version-matched documentation and safety requirements. [CI](.github/workflows/skill-ci.yml) covers the default AST engine, dependency-free core, Clippy integrations and executable examples on Linux, macOS and Windows.
 
 ## License
 

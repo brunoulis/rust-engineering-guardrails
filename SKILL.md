@@ -45,11 +45,21 @@ Use for Rust implementation, review, quality-driven refactoring, code ports, asy
 - **Correctness is a gate.** Preserve specified results, observable ordering, error behavior, and compatibility. For deterministic systems, test replay parity; for FFI, test ABI and lifetime contracts.
 - **Performance claims require evidence.** Record before/after, workload, release profile, machine/environment, repeated runs, variance, and caveats. Do not claim an improvement based on fewer `.clone()` tokens or prettier code.
 
+### Version-aware crate and toolchain work
+
+Before using a crate API, cleaning/refactoring its callers, or updating a dependency, verify the exact version/source resolved for the affected workspace member, target and feature selection. Compare `Cargo.lock` with available dependency metadata (for example `cargo metadata --frozen`), installed source, git revisions, path dependencies and `[patch]` overrides. A `Cargo.toml` range or lockfile entry alone does not establish which duplicate version or features the target uses. Check the active toolchain, `rust-toolchain.toml` when present, edition and MSRV requirements. If resolution/source is unavailable or inconsistent, mark it **UNVERIFIED**; do not run `cargo update` or install a toolchain merely to inspect.
+
+Consult official crate documentation for the resolved version **before changing crate-dependent code**, including feature/target gates, behavior and deprecations. Use the matching version on docs.rs or the project's versioned docs; for standard-library APIs, check documentation and stabilization against the project's actual Rust toolchain. If versioned docs are unavailable, use matching release/tag documentation, changelogs, source and tests. Latest docs and pinned skill examples are not evidence that an API exists under the project's version/features.
+
+For an update, establish **current and intended target versions**, consult their documentation and intervening migration/release notes, and assess MSRV, edition/toolchain requirements, default/optional features, transitive dependencies, target/`no_std` support and native/FFI compatibility as applicable. Update only when requested or justified within the authorized task. Cleanup does not authorize a crate/toolchain upgrade; a newer release alone is not a reason to change either.
+
+Inspect manifest/lockfile changes, keep unrelated dependencies unchanged, and run affected check/test/Clippy and consumer checks for the relevant feature/target/MSRV combinations. Preserve API, serialization and error contracts or identify intentional migration changes and rollback. Report versions/revisions, documentation URLs or local paths, update rationale and actual checks. Reuse verified evidence while dependency resolution, features, target and task assumptions remain unchanged.
+
 ## 2. Workflow (required when changing Rust)
 
 **A. Investigate → B. Design → C. Implement → D. Verify → E. Independent review**. When refactoring, use the six-phase quality process and autonomous scope limits in `references/refactoring.md`.
 
-**A. Investigate**: inspect existing code and test coverage; locate allocations/locks/ownership conflicts; identify which code is truly hot. Optionally run the read-only auditor; one `report` covers architecture, ownership, concurrency, safety, quality and potential performance, plus a prioritized refactoring plan with verification steps:
+**A. Investigate**: inspect existing code and test coverage; locate allocations/locks/ownership conflicts; identify which code is truly hot. Apply **Version-aware crate and toolchain work** before crate usage, cleanup or upgrades. Optionally run the read-only auditor; one `report` covers architecture, ownership, concurrency, safety, quality and potential performance, plus a prioritized refactoring plan with verification steps:
 
 ```bash
 cargo run --quiet --release --manifest-path path/to/rust-engineering-guardrails/tools/rust-guardrails/Cargo.toml -- report . --profile service --format markdown

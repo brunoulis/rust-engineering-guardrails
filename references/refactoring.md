@@ -35,6 +35,7 @@ Anti-pattern detection must work both ways: **unnecessary indirection is as much
 
 ### 1) Inventory and baseline (read-only)
 
+- For crate-dependent cleanup or upgrades, apply **SKILL.md — Version-aware crate and toolchain work**: verify the selected version/source, features and target, then consult matching documentation. A newer API example does not justify changing dependencies. For an authorized update, compare current/target docs and migration notes and verify MSRV, feature/target and public-contract compatibility separately from unrelated cleanup.
 - Read project requirements, public interfaces, hot-path budgets and intended semantics; check worktree and do not overwrite unrelated edits.
 - Inspect Cargo workspace/modules, upstream callers, tests, feature flags, target triples, error contracts, serialization, persistence and performance baselines.
 - Run applicable *non-mutating* checks, when tools exist (`cargo fmt --all -- --check`, `cargo check`, `cargo test`, `cargo clippy`). `tools/rust-guardrails/src/main.rs` summarizes **inspection signals**, not quality measurements.

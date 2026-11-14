@@ -13,6 +13,9 @@
 ## Baseline and reproducibility
 
 - Existing git changes (preserved):
+- Crates touched: exact resolved versions/sources, workspace member, features/target, active toolchain/MSRV and evidence or discrepancies:
+- Version-matched official documentation consulted (URLs or local paths), relevant API/default/deprecation facts:
+- If updating: current → target, task justification, migration notes, compatibility checks and rollback:
 - Current behavior, inputs and invariant cases:
 - Relevant tests and commands (actual results):
 - Runtime workload and environment when performance matters:
