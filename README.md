@@ -30,7 +30,7 @@ The report always says **what was checked and what was skipped**. It contains a 
 | `cargo metadata --frozen` | on | no (read-only; never touches the network or `Cargo.lock`) | measured | Workspace members, internal edges, dev-dependency cycles, duplicate crate versions, `features = ["full"]`, wildcard/git deps, build scripts/proc-macros, mixed editions, transitive dependency counts. Falls back to `--no-deps` without a lockfile. |
 | `cargo clippy` | `--with clippy` | **yes** | compiler | Type-aware lints and 12 extra audit lints (e.g. `undocumented_unsafe_blocks`, `redundant_clone`, `needless_collect`, `large_futures`), mapped to dimensions. Runs with `--locked` (never writes `Cargo.lock`) and `--cap-lints warn`, so `#![deny(..)]` in the project cannot fail the build or hide other lints. Paths are resolved against the workspace root, so auditing one member works. A diagnostic at the same location as a syntactic finding is merged into it as *confirmed*, capped at high. Only real compile errors (rustc `E…` codes) are blockers. |
 | `cargo llvm-lines` | `--with llvm-lines` or `--llvm-lines-file` | **yes** | measured | Functions dominating LLVM IR (monomorphization → compile time, binary size). Also runs `--locked`. |
-| Benchmarks | `--criterion DIR --baseline A --candidate B` or `--hyperfine A.json B.json` | no | measured | Per-benchmark verdict: *improved*, *regressed* or *inconclusive*. A change counts only when the 95% CIs do not overlap **and** it exceeds `--noise` (default 2%). `--max-regression` turns a regression into a blocker. Input with no matching baseline/candidate pair (such as a misspelled name) is an error, never an empty pass. |
+| Benchmarks | `--criterion DIR --baseline A --candidate B` or `--hyperfine A.json B.json` | no | measured | Per-benchmark verdict: *improved*, *regressed* or *inconclusive*. A change counts only when valid CIs at the same confidence level do not overlap **and** it exceeds `--noise` (default 2%). Missing/invalid uncertainty is an error; Criterion retains its supplied level and Hyperfine uses 95% Student-t intervals (a conservative df=30 bound above 31 samples). See `references/performance.md` for assumptions and input validation. `--max-regression` turns a regression into a blocker. Input with no matching baseline/candidate pair (such as a misspelled name) is an error, never an empty pass. |
 
 Build with `--no-default-features` for the zero-dependency core (heuristic engine only). The AST engine's only dependencies are `syn` 2 and `proc-macro2`.
 
@@ -53,7 +53,7 @@ rust-guardrails topology .               # raw cargo metadata --no-deps
 
 - Pattern matches never become **blocker**. Only compiler errors and benchmark regressions beyond an explicit `--max-regression` budget do.
 - Per-iteration clone/allocation candidates stay at **info** unless the file is a declared hot path (`--hot`). No blanket ban on `clone`, `collect` or `Vec` in cold code.
-- Profiles shift emphasis: `service` raises spawn-in-loop and unbounded channels; `library` raises `unwrap`/`panic`/`process::exit`; `ffi` raises `unsafe impl`/`transmute`; `prototype` lowers quality debt.
+- Profiles shift emphasis: spawn-in-loop and unbounded-channel signals stay medium in `service` until admission/backlog bounds are reviewed; `library` raises `unwrap`/`panic`/`process::exit`; `ffi` raises `unsafe impl`/`transmute`; `prototype` lowers quality debt.
 - Thresholds (`--max-file-lines` 1000, `--max-fn-lines` 80, `--max-fields` 15, `--max-methods` 30) are project choices. A wide type with few methods is reported as a data record (info), not a God object.
 
 ## Validation performed for 1.0.0
@@ -70,6 +70,7 @@ Run on Windows 11 with Rust 1.96.0 and clippy 0.1.96:
 ## Limitations
 
 - No type information in the AST engine: `.clone()` on an `Arc` and on a `Vec` look the same. Use `--with clippy` for type-aware confirmation.
+- Known filesystem I/O is matched by explicit `std::fs` operation spelling; pure values such as `Permissions::clone` are not I/O. Aliases, re-exports and method receiver types are unresolved, so calls can be missed or shadowed.
 - Context is lexical: calls through helper functions, trait dispatch and macro-generated code are not followed. Only well-known macro bodies (`format!`, `println!`, `vec!`, `assert*!`, …) are inspected.
 - `sync_lock_in_async` fires only for `.lock()/.read()/.write()` followed by `.unwrap()`/`.expect()` (std locks). A bare parking_lot `.lock()` cannot be told apart from an async lock future without types; `--with clippy` (`await_holding_lock`) covers it.
 - `large_type` merges same-named types from different modules.

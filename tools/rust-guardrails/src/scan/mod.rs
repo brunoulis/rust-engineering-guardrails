@@ -246,7 +246,8 @@ pub fn adjust_for_profile(p: Profile, f: &mut Finding) {
         f.severity = Severity::Medium;
     }
     match (p, f.rule.as_str()) {
-        (Profile::Service, "spawn_in_loop" | "unbounded_channel") => raise(f),
+        // A service profile cannot establish missing admission/backlog bounds.
+        // These signals remain medium until a reviewer inspects the mechanism.
         (Profile::Library, "unwrap_in_non_test" | "panic_in_library" | "process_exit") => raise(f),
         (Profile::Ffi, "unsafe_impl" | "transmute" | "unsafe_keyword") => raise(f),
         (Profile::Prototype, _) if f.category == Category::Quality && f.severity == Severity::Medium => f.severity = Severity::Info,

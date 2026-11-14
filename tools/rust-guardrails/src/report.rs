@@ -194,7 +194,7 @@ pub fn build_plan(findings: &[Finding], root: &str, limit: usize) -> (Vec<PlanIt
         };
         let loc = if it.file.is_empty() { "the project".to_string() } else { it.file.clone() };
         it.done_when = format!(
-            "`{}` is no longer reported for {loc} by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.",
+            "Record one reviewed disposition for `{}` in {loc}: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.",
             it.rule
         );
     }
@@ -451,8 +451,26 @@ impl Report {
                                     ("verdict", c.verdict.as_str().into()),
                                     ("change_pct", ((c.change_pct * 100.0).round() / 100.0).into()),
                                     ("over_budget", c.over_budget.into()),
-                                    ("baseline_ns", obj([("mean", c.base.mean.into()), ("lo", c.base.lo.into()), ("hi", c.base.hi.into())])),
-                                    ("candidate_ns", obj([("mean", c.cand.mean.into()), ("lo", c.cand.lo.into()), ("hi", c.cand.hi.into())])),
+                                    (
+                                        "baseline_ns",
+                                        obj([
+                                            ("mean", c.base.mean.into()),
+                                            ("lo", c.base.lo.into()),
+                                            ("hi", c.base.hi.into()),
+                                            ("confidence_level", c.base.confidence_level.into()),
+                                            ("method", c.base.method.into()),
+                                        ]),
+                                    ),
+                                    (
+                                        "candidate_ns",
+                                        obj([
+                                            ("mean", c.cand.mean.into()),
+                                            ("lo", c.cand.lo.into()),
+                                            ("hi", c.cand.hi.into()),
+                                            ("confidence_level", c.cand.confidence_level.into()),
+                                            ("method", c.cand.method.into()),
+                                        ]),
+                                    ),
                                 ])
                             })
                             .collect(),

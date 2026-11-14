@@ -9,6 +9,8 @@
 
 `Arc` is not a code smell by itself. `Rc` and `RefCell` are single-thread tools; `RefCell` checks borrows at runtime and can panic. `Arc<Mutex<T>>` is appropriate for some jobs, but widespread global shared mutable state should trigger a design review.
 
+Keep a short synchronous mutex section without await when contention is acceptable; async code does not by itself require an async mutex. Before changing a spawn loop, check whether admission is bounded before spawning and permits survive until completion. A bounded producer rate does not bound backlog when a consumer stalls: account for outstanding messages/bytes, producer lifetime and overload policy. See the pinned [Mini-Redis cases](source-cases.md) for mechanisms and their limits.
+
 ## Review checklist
 
 - Thread creation frequency (`thread::spawn`, `thread::scope` inside per-frame/tick loops) and max active threads.

@@ -509,7 +509,7 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
                 self.push("process_exit", line, None);
             } else if self.async_depth > 0 && ends("block_on") {
                 self.push("block_on_in_async", line, Some(format!("`{path}`")));
-            } else if self.async_depth > 0 && !awaited && (ends("thread::sleep") || path.starts_with("std::fs::") || path.starts_with("fs::") && !path.contains("tokio")) {
+            } else if self.async_depth > 0 && !awaited && (ends("thread::sleep") || known_std_fs_io(&path)) {
                 self.push("blocking_in_async", line, Some(format!("`{path}`")));
             } else if in_loop && (ends("Vec::with_capacity") || ends("String::with_capacity") || ends("Box::new")) {
                 self.push("allocation_in_loop", line, Some(format!("`{path}`")));
@@ -582,9 +582,79 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 }
 
+// Explicit known operations only: namespace membership does not imply I/O.
+// This is path spelling, not name resolution; aliases/re-exports are not followed.
+fn known_std_fs_io(path: &str) -> bool {
+    matches!(
+        path.strip_prefix("std::fs::"),
+        Some(
+            "canonicalize"
+                | "copy"
+                | "create_dir"
+                | "create_dir_all"
+                | "exists"
+                | "hard_link"
+                | "metadata"
+                | "read"
+                | "read_dir"
+                | "read_link"
+                | "read_to_string"
+                | "remove_dir"
+                | "remove_dir_all"
+                | "remove_file"
+                | "rename"
+                | "set_permissions"
+                | "symlink_metadata"
+                | "write"
+                | "File::open"
+                | "File::create"
+                | "File::create_new"
+                | "File::metadata"
+                | "File::lock"
+                | "File::lock_shared"
+                | "File::sync_all"
+                | "File::sync_data"
+                | "File::set_len"
+                | "File::set_permissions"
+                | "File::set_times"
+                | "File::set_modified"
+                | "File::try_clone"
+                | "OpenOptions::open"
+                | "DirBuilder::create"
+                | "DirEntry::metadata"
+                | "DirEntry::file_type"
+        )
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pure_fs_values_are_not_blocking_io() {
+        let r = rules_of("async fn f(value: &std::fs::Permissions) {\n let _ = std::fs::Permissions::clone(value);\n let _ = std::fs::read(\"file\");\n let _ = std::fs::File::open(\"file\");\n}");
+        assert!(!r.contains(&("blocking_in_async".into(), 2)), "{r:?}");
+        assert!(r.contains(&("blocking_in_async".into(), 3)), "{r:?}");
+        assert!(r.contains(&("blocking_in_async".into(), 4)), "{r:?}");
+    }
+
+    #[test]
+    fn explicit_file_lock_calls_can_block_async_tasks() {
+        let r = rules_of("async fn f(file: &std::fs::File) {\n let _ = std::fs::File::lock(file);\n let _ = std::fs::File::lock_shared(file);\n let _ = std::fs::File::try_lock(file);\n let _ = std::fs::File::try_lock_shared(file);\n}");
+        assert_eq!(r.iter().filter(|(rule, _)| rule == "blocking_in_async").cloned().collect::<Vec<_>>(), vec![("blocking_in_async".into(), 2), ("blocking_in_async".into(), 3)]);
+    }
+
+    #[test]
+    fn setting_file_modified_time_is_io() {
+        assert!(rules_of("async fn f(file: &std::fs::File, time: std::time::SystemTime) { std::fs::File::set_modified(file, time); }").contains(&("blocking_in_async".into(), 1)));
+    }
+
+    #[test]
+    fn fs_aliases_and_stored_async_futures_are_unresolved() {
+        let r = rules_of("use tokio::fs; use std::fs as disk; async fn f() {\n let future = fs::read(\"file\");\n let _ = future.await;\n let _ = disk::read(\"file\");\n let _ = std::fs::read(\"file\");\n}");
+        assert_eq!(r.iter().filter(|(rule, _)| rule == "blocking_in_async").cloned().collect::<Vec<_>>(), vec![("blocking_in_async".into(), 5)]);
+    }
 
     fn rules_of(src: &str) -> Vec<(String, usize)> {
         scan("f.rs", src, 80).unwrap().findings.into_iter().map(|f| (f.rule, f.line)).collect()

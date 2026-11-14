@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Root | `tests/fixtures/sample` |
+| Root | `tools/rust-guardrails/tests/fixtures/sample` |
 | Profile | service |
 | Source engine | ast |
 | Files / lines | 2 / 68 |
@@ -17,15 +17,15 @@
 | source | ran | ast engine, 2 files |
 | metadata | ran | resolved dependency graph (--frozen) |
 | clippy | ran | 3 diagnostic(s), 0 compile error(s), build succeeded in 0.2s; extra lints: 12; lints capped at warn |
-| llvm-lines | ran | parsed tests/fixtures/llvm-lines.txt; 4 rows, total 30737 IR lines |
-| benchmarks | ran | criterion tests/fixtures/criterion (before → after): 3 compared, 0 unmatched |
+| llvm-lines | ran | parsed tools/rust-guardrails/tests/fixtures/llvm-lines.txt; 4 rows, total 30737 IR lines |
+| benchmarks | ran | criterion tools/rust-guardrails/tests/fixtures/criterion (before → after): 3 compared, 0 unmatched |
 
 ## Summary by dimension
 
 | Dimension | Blocker | High | Medium | Info |
 | --- | ---: | ---: | ---: | ---: |
 | safety | 0 | 1 | 0 | 0 |
-| concurrency | 0 | 3 | 1 | 1 |
+| concurrency | 0 | 1 | 3 | 1 |
 | ownership | 0 | 0 | 2 | 2 |
 | performance | 1 | 0 | 2 | 4 |
 | architecture | 0 | 0 | 0 | 1 |
@@ -33,13 +33,13 @@
 
 ## Benchmark comparison
 
-Source: criterion tests/fixtures/criterion (before → after)
+Source: criterion tools/rust-guardrails/tests/fixtures/criterion (before → after)
 
 | Benchmark | Verdict | Change | Detail |
 | --- | --- | ---: | --- |
-| group/encode | inconclusive | +1.7% | mean 300.0 ns → 305.0 ns (+1.7%); 95% CI [280.0 ns, 320.0 ns] vs [285.0 ns, 325.0 ns] |
-| parse | improved | -20.0% | mean 1.000 µs → 800.0 ns (-20.0%); 95% CI [990.0 ns, 1.010 µs] vs [795.0 ns, 805.0 ns] |
-| render | regressed (over budget) | +20.0% | mean 5.000 µs → 6.000 µs (+20.0%); 95% CI [4.950 µs, 5.050 µs] vs [5.940 µs, 6.060 µs] |
+| group/encode | inconclusive | +1.7% | mean 300.0 ns → 305.0 ns (+1.7%); 95% CI [280.0 ns, 320.0 ns] (Criterion supplied interval) vs 95% CI [285.0 ns, 325.0 ns] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability |
+| parse | improved | -20.0% | mean 1.000 µs → 800.0 ns (-20.0%); 95% CI [990.0 ns, 1.010 µs] (Criterion supplied interval) vs 95% CI [795.0 ns, 805.0 ns] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability |
+| render | regressed (over budget) | +20.0% | mean 5.000 µs → 6.000 µs (+20.0%); 95% CI [4.950 µs, 5.050 µs] (Criterion supplied interval) vs 95% CI [5.940 µs, 6.060 µs] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability |
 
 ## Prioritized refactoring plan
 
@@ -62,7 +62,7 @@ Proposed only — nothing was changed. Work one item per change set; keep pure m
 - [ ] re-run benchmarks at least twice on the same machine
 - [ ] rust-guardrails bench-compare ...
 
-**Done when:** `bench_regression` is no longer reported for the project by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `bench_regression` in the project: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/performance.md`
 
@@ -84,7 +84,7 @@ Reference: `references/performance.md`
 - [ ] cargo +nightly miri test (if the code is Miri-compatible)
 - [ ] cargo test --workspace (must pass before and after; record both runs)
 
-**Done when:** `unsafe_without_safety_comment` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `unsafe_without_safety_comment` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/anti-patterns.md`
 
@@ -106,19 +106,19 @@ Reference: `references/anti-patterns.md`
 - [ ] cargo build --release --timings
 - [ ] cargo test --workspace (must pass before and after; record both runs)
 
-**Done when:** `llvm_lines_hotspot` is no longer reported for the project by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `llvm_lines_hotspot` in the project: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/performance.md`
 
-### R4 · P2 · concurrency — Blocking call inside async code — `std::thread::sleep` (in `slow`)
+### R4 · P2 · concurrency — Known blocking operation spelling inside async code — `std::thread::sleep` (in `slow`)
 
 - **Where:** src/lib.rs:39 (1 occurrence(s))
 - **Rule:** `blocking_in_async` · severity high · confidence syntactic · score 7.0
-- **Why:** `std::thread::sleep`, `std::fs` or other blocking calls in an async context block the executor thread and stall unrelated tasks.
+- **Why:** Recognized filesystem I/O or thread sleep in lexical async context may stall an executor. Confirm name resolution and execution context; the AST scanner has neither types nor alias resolution.
 
 | Option | When / what |
 | --- | --- |
-| Keep as is | Never in a multi-task runtime; acceptable only in a dedicated single-purpose runtime with documentation. |
+| Keep as is | The call resolves to a different nonblocking API, runs off the executor, or the reviewed execution/latency contract explicitly permits this blocking operation. |
 | Minimal fix | Use the async equivalent (`tokio::time::sleep`, `tokio::fs`) or wrap in `spawn_blocking`. |
 | Structural | Move blocking I/O behind a dedicated blocking pool or Sans-IO core. |
 
@@ -127,57 +127,11 @@ Reference: `references/performance.md`
 - [ ] cargo test --workspace (must pass before and after; record both runs)
 - [ ] run under load with tokio-console or timing logs: no executor stalls
 
-**Done when:** `blocking_in_async` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `blocking_in_async` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/async-reliability.md`
 
-### R5 · P2 · concurrency — Thread/task spawned per loop iteration — `std::thread::spawn` (in `spawn_all`)
-
-- **Where:** src/lib.rs:34 (1 occurrence(s))
-- **Rule:** `spawn_in_loop` · severity high · confidence syntactic · score 7.0
-- **Why:** Spawning inside a loop creates one thread/task per item with no upper bound unless something else limits it — oversubscription and memory growth under load.
-
-| Option | When / what |
-| --- | --- |
-| Keep as is | The iteration count is small and bounded by construction (e.g. one per CPU). |
-| Minimal fix | Bound concurrency with a `Semaphore`, `JoinSet` with a cap, or a fixed worker pool. |
-| Structural | Use a bounded work queue with a fixed number of workers and an explicit overload policy. |
-
-**Characterize first:** add tests that pin the current observable behavior before changing this code.
-
-**Verify:**
-
-- [ ] cargo test --workspace (must pass before and after; record both runs)
-- [ ] load test with N >> expected items; observe thread/task count and memory stay bounded
-
-**Done when:** `spawn_in_loop` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
-
-Reference: `references/async-reliability.md`
-
-### R6 · P2 · concurrency — Unbounded channel — `std::sync::mpsc::channel()` is unbounded (in `spawn_all`)
-
-- **Where:** src/lib.rs:31 (1 occurrence(s))
-- **Rule:** `unbounded_channel` · severity high · confidence syntactic · score 7.0
-- **Why:** If producers outpace consumers, memory grows without limit and overload is invisible.
-
-| Option | When / what |
-| --- | --- |
-| Keep as is | Producer rate is bounded by construction (e.g. one message per user action). |
-| Minimal fix | Switch to a bounded channel and decide the policy when full (await, drop, reject). |
-| Structural | Make backpressure part of the API contract. |
-
-**Characterize first:** add tests that pin the current observable behavior before changing this code.
-
-**Verify:**
-
-- [ ] cargo test --workspace (must pass before and after; record both runs)
-- [ ] overload test: memory stays bounded when the consumer is paused
-
-**Done when:** `unbounded_channel` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
-
-Reference: `references/async-reliability.md`
-
-### R7 · P2 · performance — Probable allocation per loop iteration — `.collect()` (in `step`)
+### R5 · P2 · performance — Probable allocation per loop iteration — `.collect()` (in `step`)
 
 - **Where:** src/hot.rs:6 — **hot path** (1 occurrence(s))
 - **Rule:** `allocation_in_loop` · severity medium · confidence syntactic · score 6.0
@@ -195,11 +149,11 @@ Reference: `references/async-reliability.md`
 - [ ] cargo clippy --workspace --all-targets -- -W clippy::needless_collect
 - [ ] only if speed is claimed: cargo bench -- --save-baseline before, apply, cargo bench -- --save-baseline after, then rust-guardrails bench-compare --criterion target/criterion --baseline before --candidate after
 
-**Done when:** `allocation_in_loop` is no longer reported for src/hot.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `allocation_in_loop` in src/hot.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/performance.md`
 
-### R8 · P2 · concurrency — `clippy::unused_async`: unused `async` for function with no await statements
+### R6 · P2 · concurrency — `clippy::unused_async`: unused `async` for function with no await statements
 
 - **Where:** src/lib.rs:38 (1 occurrence(s))
 - **Rule:** `clippy::unused_async` · severity medium · confidence compiler · score 4.5
@@ -218,11 +172,11 @@ Reference: `references/performance.md`
 - [ ] cargo clippy --workspace --all-targets -- -W clippy::unused_async (no `clippy::unused_async` at src/lib.rs)
 - [ ] cargo test --workspace (must pass before and after)
 
-**Done when:** `clippy::unused_async` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `clippy::unused_async` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/concurrency.md`
 
-### R9 · P2 · ownership — `clippy::redundant_clone`: redundant clone
+### R7 · P2 · ownership — `clippy::redundant_clone`: redundant clone
 
 - **Where:** src/lib.rs:55 (1 occurrence(s))
 - **Rule:** `clippy::redundant_clone` · severity medium · confidence compiler · score 4.5
@@ -241,9 +195,55 @@ Reference: `references/concurrency.md`
 - [ ] cargo clippy --workspace --all-targets -- -W clippy::redundant_clone (no `clippy::redundant_clone` at src/lib.rs)
 - [ ] cargo test --workspace (must pass before and after)
 
-**Done when:** `clippy::redundant_clone` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `clippy::redundant_clone` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/architecture.md`
+
+### R8 · P3 · concurrency — Thread/task spawned per loop iteration — `std::thread::spawn` (in `spawn_all`)
+
+- **Where:** src/lib.rs:34 (1 occurrence(s))
+- **Rule:** `spawn_in_loop` · severity medium · confidence syntactic · score 3.0
+- **Why:** A spawn occurs inside a loop. The scanner does not determine whether admission or joining already bounds active tasks; inspect that before diagnosing resource growth.
+
+| Option | When / what |
+| --- | --- |
+| Keep as is | The total work is bounded, or admission is capped before spawning (e.g. a semaphore permit retained until task completion), or joins cap in-flight tasks. Verify release on errors/cancellation; an infinite accept loop can be valid. |
+| Minimal fix | If no effective bound exists, cap admission before spawning with a Semaphore, capped JoinSet, or fixed worker pool. Acquiring a permit inside every spawned task still permits unbounded waiting tasks. |
+| Structural | Use a bounded work queue with a fixed number of workers and an explicit overload policy. |
+
+**Characterize first:** add tests that pin the current observable behavior before changing this code.
+
+**Verify:**
+
+- [ ] cargo test --workspace (must pass before and after; record both runs)
+- [ ] load test with N >> expected items; observe thread/task count and memory stay bounded
+
+**Done when:** Record one reviewed disposition for `spawn_in_loop` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
+
+Reference: `references/async-reliability.md`
+
+### R9 · P3 · concurrency — Unbounded channel — `std::sync::mpsc::channel()` is unbounded (in `spawn_all`)
+
+- **Where:** src/lib.rs:31 (1 occurrence(s))
+- **Rule:** `unbounded_channel` · severity medium · confidence syntactic · score 3.0
+- **Why:** If producers outpace consumers, memory grows without limit and overload is invisible.
+
+| Option | When / what |
+| --- | --- |
+| Keep as is | Outstanding messages/bytes have an independent bound, or a finite producer lifetime and total work budget bound the backlog. Otherwise retain only as an explicit operational exception with overload limits and monitoring; a rate limit or one message per user action alone is insufficient when consumers stop. |
+| Minimal fix | If backlog is not bounded, use a bounded channel with an await/drop/reject policy; include waiting producers and message sizes in the memory budget. |
+| Structural | Make backpressure part of the API contract. |
+
+**Characterize first:** add tests that pin the current observable behavior before changing this code.
+
+**Verify:**
+
+- [ ] cargo test --workspace (must pass before and after; record both runs)
+- [ ] overload test: memory stays bounded when the consumer is paused
+
+**Done when:** Record one reviewed disposition for `unbounded_channel` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
+
+Reference: `references/async-reliability.md`
 
 ### R10 · P3 · ownership — `Rc<RefCell<_>>` shared mutable state
 
@@ -264,7 +264,7 @@ Reference: `references/architecture.md`
 - [ ] cargo test --workspace (must pass before and after; record both runs)
 - [ ] cargo clippy --workspace --all-targets -- -W clippy::await_holding_refcell_ref
 
-**Done when:** `rc_refcell` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `rc_refcell` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/architecture.md`
 
@@ -284,7 +284,7 @@ Reference: `references/architecture.md`
 
 - [ ] cargo test --workspace (must pass before and after; record both runs)
 
-**Done when:** `unfinished_code` is no longer reported for src/lib.rs by `rust-guardrails report` (or each remaining occurrence carries a justification comment / narrow `#[allow]`), and every verification step passed with its output recorded.
+**Done when:** Record one reviewed disposition for `unfinished_code` in src/lib.rs: defect fixed with applicable verification results, legitimate use retained with code/test evidence, or investigation deferred with the unresolved question and next check. Valid code may remain unchanged and the signal may remain; no per-occurrence comment or lint suppression is required.
 
 Reference: `references/refactoring.md`
 
@@ -300,10 +300,10 @@ Reference: `references/refactoring.md`
 
 | Sev | Conf | Location | Rule | Message | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| high | syntactic | src/lib.rs:31 | `unbounded_channel` | Unbounded channel — `std::sync::mpsc::channel()` is unbounded (in `spawn_all`) | `let (tx, _rx) = std::sync::mpsc::channel::<usize>();` |
-| high | syntactic | src/lib.rs:34 | `spawn_in_loop` | Thread/task spawned per loop iteration — `std::thread::spawn` (in `spawn_all`) | `std::thread::spawn(move \|\| tx.send(i).unwrap());` |
-| high | syntactic | src/lib.rs:39 | `blocking_in_async` | Blocking call inside async code — `std::thread::sleep` (in `slow`) | `std::thread::sleep(std::time::Duration::from_millis(1));` |
+| high | syntactic | src/lib.rs:39 | `blocking_in_async` | Known blocking operation spelling inside async code — `std::thread::sleep` (in `slow`) | `std::thread::sleep(std::time::Duration::from_millis(1));` |
 | medium | compiler | src/lib.rs:38 | `clippy::unused_async` | unused `async` for function with no await statements | `pub async fn slow() {` |
+| medium | syntactic | src/lib.rs:31 | `unbounded_channel` | Unbounded channel — `std::sync::mpsc::channel()` is unbounded (in `spawn_all`) | `let (tx, _rx) = std::sync::mpsc::channel::<usize>();` |
+| medium | syntactic | src/lib.rs:34 | `spawn_in_loop` | Thread/task spawned per loop iteration — `std::thread::spawn` (in `spawn_all`) | `std::thread::spawn(move \|\| tx.send(i).unwrap());` |
 | info | syntactic | src/lib.rs:12 | `arc_mutex` | `Arc<Mutex<_>>` / `Arc<RwLock<_>>` shared state — `Arc<Mutex<_>>` | `pub counter: Arc<Mutex<u64>>,` |
 
 ### ownership (4)
@@ -319,12 +319,12 @@ Reference: `references/refactoring.md`
 
 | Sev | Conf | Location | Rule | Message | Evidence |
 | --- | --- | --- | --- | --- | --- |
-| blocker | measured | project | `bench_regression` | render: regressed (+20.0%) — exceeds --max-regression budget | `mean 5.000 µs → 6.000 µs (+20.0%); 95% CI [4.950 µs, 5.050 µs] vs [5.940 µs, 6.060 µs]` |
+| blocker | measured | project | `bench_regression` | render: regressed (+20.0%) — exceeds --max-regression budget | `mean 5.000 µs → 6.000 µs (+20.0%); 95% CI [4.950 µs, 5.050 µs] (Criterion supplied interval) vs 95% CI [5.940 µs, 6.060 µs] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability` |
 | medium | syntactic | src/hot.rs:6 🔥 | `allocation_in_loop` | Probable allocation per loop iteration — `.collect()` (in `step`) | `let copy: Vec<f32> = f.iter().copied().collect();` |
 | medium | measured | project | `llvm_lines_hotspot` | `core::ptr::drop_in_place<T>` generates 9.4% of LLVM IR | `2900 lines, 83 monomorphized copies (total 30737 lines)` |
 | info | measured | project | `llvm_lines_hotspot` | `<alloc::vec::Vec<T> as core::ops::Drop>::drop` generates 2.5% of LLVM IR | `760 lines, 2 monomorphized copies (total 30737 lines)` |
-| info | measured | project | `bench_inconclusive` | group/encode: inconclusive (+1.7%) | `mean 300.0 ns → 305.0 ns (+1.7%); 95% CI [280.0 ns, 320.0 ns] vs [285.0 ns, 325.0 ns]` |
-| info | measured | project | `bench_improvement` | parse: improved (-20.0%) | `mean 1.000 µs → 800.0 ns (-20.0%); 95% CI [990.0 ns, 1.010 µs] vs [795.0 ns, 805.0 ns]` |
+| info | measured | project | `bench_inconclusive` | group/encode: inconclusive (+1.7%) | `mean 300.0 ns → 305.0 ns (+1.7%); 95% CI [280.0 ns, 320.0 ns] (Criterion supplied interval) vs 95% CI [285.0 ns, 325.0 ns] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability` |
+| info | measured | project | `bench_improvement` | parse: improved (-20.0%) | `mean 1.000 µs → 800.0 ns (-20.0%); 95% CI [990.0 ns, 1.010 µs] (Criterion supplied interval) vs 95% CI [795.0 ns, 805.0 ns] (Criterion supplied interval); interval separation is a comparison heuristic, not proof of experiment comparability` |
 | info | syntactic | src/lib.rs:25 | `allocation_in_loop` | Probable allocation per loop iteration — `format!` (in `per_item`) | `out.push(format!("{owned}!"));` |
 
 ### architecture (1)

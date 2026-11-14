@@ -24,6 +24,42 @@ fn sample() -> String {
     fixtures().join("sample").to_string_lossy().into_owned()
 }
 
+#[test]
+#[cfg(feature = "ast")]
+fn bounded_spawn_is_a_review_lead_not_a_high_gate_failure() {
+    let dir = std::env::temp_dir().join(format!("rust-guardrails-bounded-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    // Mini-Redis's admission pattern: the permit is acquired BEFORE spawning,
+    // then retained inside the task until the handler finishes.
+    std::fs::write(
+        dir.join("lib.rs"),
+        "async fn accept(limit: Semaphore) { loop { let permit = limit.acquire_owned().await.unwrap(); tokio::spawn(async move { handle().await; drop(permit); }); } }",
+    )
+    .unwrap();
+    let o = run(&["report", &dir.to_string_lossy(), "--profile", "service", "--no-metadata", "--fail-on", "high", "--format", "json"]);
+    std::fs::remove_file(dir.join("lib.rs")).unwrap();
+    std::fs::remove_dir(&dir).unwrap();
+    assert!(o.status.success(), "{}", stdout(&o));
+    assert!(stdout(&o).contains("\"rule\":\"spawn_in_loop\""));
+}
+
+#[test]
+fn missing_benchmark_uncertainty_is_an_error_not_an_improvement() {
+    let dir = std::env::temp_dir().join(format!("rust-guardrails-missing-ci-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join("before.json");
+    let cand = dir.join("after.json");
+    std::fs::write(&base, r#"{"results":[{"command":"work","mean":2}]}"#).unwrap();
+    std::fs::write(&cand, r#"{"results":[{"command":"work","mean":1}]}"#).unwrap();
+    let o = run(&["bench-compare", "--hyperfine", &base.to_string_lossy(), &cand.to_string_lossy(), "--format", "json"]);
+    std::fs::remove_file(base).unwrap();
+    std::fs::remove_file(cand).unwrap();
+    std::fs::remove_dir(dir).unwrap();
+    assert!(!o.status.success());
+    assert!(!stdout(&o).contains("improved"));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("requires a positive finite mean/stddev"));
+}
+
 /// Tiny helpers over the JSON report without a JSON dependency in tests:
 /// each finding is emitted as `{"rule":"...","category":...,"file":"...","line":N,...}`.
 fn has_finding(json: &str, rule: &str, file: &str, line: usize) -> bool {
@@ -176,7 +212,7 @@ fn report_includes_llvm_lines_and_bench() {
 #[test]
 fn explain_and_errors() {
     let o = run(&["explain", "spawn_in_loop"]);
-    assert!(o.status.success() && stdout(&o).contains("Bound concurrency"));
+    assert!(o.status.success() && stdout(&o).contains("cap admission before spawning"));
     assert!(stdout(&run(&["explain"])).contains("unsafe_without_safety_comment"));
     assert_eq!(run(&["explain", "nope"]).status.code(), Some(2));
     assert_eq!(run(&["report", "does/not/exist"]).status.code(), Some(2));

@@ -1,8 +1,8 @@
 ---
 name: rust-engineering-guardrails
 description: Design, audit and incrementally refactor Rust with evidence-based architecture, type safety and measured performance.
-version: 1.0.0
 metadata:
+  version: 1.0.0
   hermes:
     tags: [rust, architecture, refactoring, performance, code-review]
 ---
@@ -28,6 +28,7 @@ Use for Rust implementation, review, quality-driven refactoring, code ports, asy
    - `references/anti-patterns.md`: short bad/good code examples and exceptions.
    - `references/agent-workflow.md`: planning, independent reviews, reporting.
    - `references/sources.md`: origin of ideas and primary technical documentation.
+   - `references/source-cases.md`: pinned Mini-Redis and ripgrep mechanisms, conditions for retaining them, and linked behavior tests; read before replacing working locks, clones, admission limits or scoped borrows.
 4. For nontrivial tasks, establish a *before* baseline or state explicitly why no baseline is possible. Identify invariants and user-visible behavior before editing.
 
 ## 1. Non-negotiable engineering behavior
@@ -57,7 +58,7 @@ cargo run --quiet --release --manifest-path path/to/rust-engineering-guardrails/
 
 Layers are opt-in by cost. The default runs the `syn` AST scan and `cargo metadata --frozen`, both read-only. `--with clippy` adds type-aware lints and `--with llvm-lines` adds monomorphization hotspots; **both build the project, so use them on trusted code only.** `--criterion DIR --baseline A --candidate B` (or `--hyperfine A.json B.json`) validates an optimization: it reports *improved/regressed* only when confidence intervals separate beyond the noise threshold. `bench-compare` runs that comparison alone. `explain RULE` prints a rule's playbook. `audit`/`triage` keep the legacy (pre-1.0) output.
 
-The report states each finding's confidence (`heuristic` < `syntactic` < `compiler`/`measured`) and which analyzers were skipped. The AST engine has **no type information**: a finding is an investigation lead, never proof of an allocation, vulnerability or bad architecture. Before acting on a plan item, read the code at its location, pick an option (keep / minimal / structural), and run its verification steps. The tool never edits code.
+The report states each finding's confidence (`heuristic` < `syntactic` < `compiler`/`measured`) and which analyzers were skipped. The AST engine has **no type information**: a finding is an investigation lead, never proof of an allocation, vulnerability or bad architecture. Before acting on a plan item, read the code at its location and pick an option (keep / minimal / structural). Record one disposition with evidence: fixed and verified, legitimate use retained, or investigation deferred with the unresolved question. Valid code need not change or acquire repeated comments to silence a signal. The tool never edits code.
 
 **B. Design**: for substantive changes, compare at least two options, including a minimal correction. For existing debt, compare keep-as-is / minimal fix / structural alternative using evidence; do not perform an opportunistic repo-wide rewrite. State trade-offs in readability, ownership, allocations, latency, compile time, API and invariants. Don't cargo-cult the Reddit case study. **If proposing additional crates**, analyze all four layout options via `references/crate-boundaries.md`, record `templates/crate-decision.md`, and default to the least complex design that meets observed needs. Never silently add crates during an unrelated refactor.
 
@@ -79,6 +80,8 @@ A refactor with unverified changes to public behavior, serialization, state inva
 Never escalate `clone`, `Arc`, `mem::take`, raw line count, or a single `impl` count to BLOCKER solely from a regex match. No universal numeric thresholds: project-specific budgets belong in repo docs/CI.
 
 ## 4. Required handoff format
+
+Scale the handoff to the change: for a small correction, a short explanation plus actual validation and remaining uncertainty is sufficient. Use the fuller breakdown below when its dimensions affect the decision.
 
 1. **Intent and scope** (for existing-code refactors: audit/refactor/deep-refactor, quality dimension and inspected evidence); **behavior/invariants** retained or changed, with tests.
 2. **Architectural decision** (option chosen, alternative rejected, trade-offs). If crate boundaries are relevant: report **KEEP / LIB-BIN / WORKSPACE / INDEPENDENT / DEFER**, rationale and ADR.

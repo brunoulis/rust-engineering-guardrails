@@ -35,6 +35,10 @@ Do not assume `criterion`, `hyperfine`, `cargo-flamegraph`, or allocator instrum
 
 ## Validating compiler and memory observations
 
+`bench-compare` requires complete, finite, positive timing estimates with nondegenerate intervals. Criterion must include bounds and its actual confidence level; comparisons with different levels are inconclusive. Hyperfine must include at least two valid times and positive sample standard deviation, with mean/stddev matching the samples within relative tolerance `1e-6`. If `exit_codes` is present, every sample must have numeric exit code zero; failed, unknown or mismatched statuses are rejected. Legacy input without `exit_codes` is accepted with command success unverified. Missing, zero-variance, inconsistent or invalid uncertainty is rejected rather than converted into certainty. Preserve full export precision.
+
+Hyperfine intervals use two-sided 95% Student-t values for 1–30 degrees of freedom, conservatively using the df=30 value for larger samples. This avoids applying the narrower normal `1.96` approximation to small samples. The method still assumes independent, approximately normal observations; sample count alone cannot verify those assumptions. Interval separation plus the noise threshold is a screening rule, not Criterion's hypothesis test or proof of comparable workloads. See [NIST mean confidence limits](https://www.itl.nist.gov/div898/handbook/eda/section3/eda352.htm), [t critical values](https://www.itl.nist.gov/div898/handbook/eda/section3/eda3672.htm) and [Criterion confidence/significance settings](https://docs.rs/criterion/latest/criterion/struct.Criterion.html#method.confidence_level).
+
 - Split compilation boundaries only when `--timings` shows a bottleneck or maintainability justifies it. A small single crate can be preferable.
 - Detect repeated dependency versions/features and unnecessary proc macros when build time matters.
 - Use an allocation-counting benchmark harness or heap profiler to prove allocation frequency. Static grep only produces **candidates**.
