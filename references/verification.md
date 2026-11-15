@@ -32,6 +32,7 @@ Useful optional tools (do not assume installed): `cargo nextest`, `cargo llvm-co
 - Port: golden fixtures and differential verification; check architecture and endian where relevant.
 - FFI/unsafe: every unsafe block has `SAFETY` reasoning; dedicated review and appropriate sanitizer/Miri/fuzz checks.
 - API: error mapping, public signatures, compatibility, and any schema/protocol changes.
+- Native UI, when applicable: small-surface containment, option/font/DPI combinations, requested versus effective bounds, stable auto fonts, actual backend/variant renders and final host artifact identity. Follow [native-layout.md](native-layout.md); deliberate canvases need their own overflow policy.
 
 ## CI philosophy
 

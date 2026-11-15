@@ -1,6 +1,8 @@
-# Rust Engineering Guardrails 1.0.0
+# Rust Engineering Guardrails 1.1.0
 
 Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. One command produces a report covering **architecture, ownership, concurrency, safety, quality and potential performance**, with a **prioritized, verifiable refactoring plan**. The tool proposes changes; it never edits the audited code. Works as a Claude Code, Codex or Hermes skill.
+
+Skill 1.1.0 adds [native-window content-fit guidance](references/native-layout.md): shared geometry for small surfaces, stable automatic fonts, requested versus effective bounds, and verification of the actual renderer and running artifact. The bundled auditor remains at 1.0.0; no automatic visual-collision detector or new CLI rule is claimed. Behavioral evaluation cases are in [docs/native-layout-scenarios.md](docs/native-layout-scenarios.md).
 
 ## Install
 

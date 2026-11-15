@@ -2,7 +2,7 @@
 name: rust-engineering-guardrails
 description: Design, audit and incrementally refactor Rust with evidence-based architecture, type safety and measured performance.
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   hermes:
     tags: [rust, architecture, refactoring, performance, code-review]
 ---
@@ -25,6 +25,7 @@ Use for Rust implementation, review, quality-driven refactoring, code ports, asy
    - `references/async-reliability.md`: cancellation safety, bounded queues/workers, overload, graceful shutdown.
    - `references/parity.md`: determinism, migrations, differential and property tests.
    - `references/verification.md`: Clippy, tests, CI, lint strategy, release gates.
+   - `references/native-layout.md`: native windows, overlays and Rust-rendered UI; read when options, fonts or small bounds can cause overlap, clipping or automatic resizing.
    - `references/anti-patterns.md`: short bad/good code examples and exceptions.
    - `references/agent-workflow.md`: planning, independent reviews, reporting.
    - `references/sources.md`: origin of ideas and primary technical documentation.
@@ -43,6 +44,7 @@ Use for Rust implementation, review, quality-driven refactoring, code ports, asy
 - **Concurrency is budgeted.** No unbounded thread/task creation, buffers, queues, or accidental blocking within async runtimes. Investigate data ownership and channels before shared mutable state where sensible. `Arc` itself is a legitimate tool, not an error. Analyze cancellation-safety, overload policy, bounded capacity and shutdown behavior; see `references/async-reliability.md`.
 - **Safety matters.** Do not introduce `unsafe` to bypass compiler errors. If FFI or a demonstrated need requires unsafe, document invariants, isolate it behind a safe API, and review separately. Never weaken tests or lints to force a pass.
 - **Correctness is a gate.** Preserve specified results, observable ordering, error behavior, and compatibility. For deterministic systems, test replay parity; for FFI, test ABI and lifetime contracts.
+- **Content fit is a rendering contract.** For native UI, derive layout and effective window requirements from the same content geometry. Preserve requested bounds, font policy and deliberate canvas semantics. Verify the actual renderer/variant; a compile or a screenshot of another variant does not prove visual correctness. See `references/native-layout.md`.
 - **Performance claims require evidence.** Record before/after, workload, release profile, machine/environment, repeated runs, variance, and caveats. Do not claim an improvement based on fewer `.clone()` tokens or prettier code.
 
 ### Version-aware crate and toolchain work
