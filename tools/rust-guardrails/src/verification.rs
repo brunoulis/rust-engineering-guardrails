@@ -12,9 +12,12 @@ struct Technique {
 fn select(findings: &[Finding], profile: Profile) -> Vec<Technique> {
     let has = |category| findings.iter().any(|f| f.category == category);
     let memory = profile == Profile::Ffi
-        || findings
-            .iter()
-            .any(|f| matches!(f.rule.as_str(), "unsafe_keyword" | "unsafe_block" | "unsafe_without_safety_comment" | "unsafe_fn_without_safety_doc" | "unsafe_impl" | "transmute"));
+        || findings.iter().any(|f| {
+            matches!(
+                f.rule.as_str(),
+                "unsafe_keyword" | "unsafe_block" | "unsafe_safety_comment_review" | "unsafe_without_safety_comment" | "unsafe_fn_without_safety_doc" | "unsafe_impl" | "transmute"
+            )
+        });
     let mut plan = vec![Technique {
         name: "contract-tests",
         reason: "Preserve observable behavior, errors, serialization and relevant features/targets",

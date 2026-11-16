@@ -2,7 +2,7 @@
 name: rust-engineering-guardrails
 description: Design, audit and incrementally refactor Rust with evidence-based architecture, type safety and measured performance.
 metadata:
-  version: 1.2.0
+  version: 1.3.0
   hermes:
     tags: [rust, architecture, refactoring, performance, code-review]
 ---
@@ -35,6 +35,7 @@ Use for Rust implementation, review, quality-driven refactoring, code ports, asy
 
 1. Select the task mode: [audit](modes/audit.md) (inspect and report), [implement](modes/implement.md) (requested behavior), [refactor](modes/refactor.md) (scoped behavior-preserving improvement), or [deep-refactor](modes/deep-refactor.md) (justified architectural migration). Read the selected mode; modes describe authorized work, not CLI subcommands.
 2. Select the domain [profile](profiles/README.md): **service**, **engine**, **library**, **ffi** or **prototype**. Profiles set emphasis independently of task mode. Inspect `Cargo.toml`, crate boundaries, dependencies/features, toolchain, tests, project rules and `.rust-rails.toml` when present; use [project profile policy](policies/project-profile.md). Don't assume a three-crate workspace, ECS, zero allocation, or `no_std` is appropriate.
+   Establish the actual [source scope](policies/source-scope.md) before interpreting counts: the auditor uses Git selection when available, includes maintained untracked sources, and reports filesystem fallback. Without a root manifest it discovers nested Cargo projects from the same source inventory; keep independent crates independent. Use `--include-ignored` only when that broader scope is intended.
 3. Read the *one* reference needed for the current task; load more only when evidence warrants it:
    - `references/refactoring.md`: **intelligent quality triage and scoped incremental refactoring** (read when improving existing code).
    - `references/architecture.md`: ownership, borrow checker, data model, arenas/newtypes/traits.
@@ -97,7 +98,7 @@ Layers are opt-in by cost. The default runs the `syn` AST scan and `cargo metada
 
 For continuous debt, `report . --write-baseline rust-baseline.json` records the complete finding set; `report . --baseline rust-baseline.json --fail-on high --format sarif` gates new or escalated findings. With Criterion, `--baseline` retains its benchmark-name meaning; use `--debt-baseline FILE` to compare debt too. Review a baseline before accepting it; never regenerate it automatically to pass CI. See [continuous refactoring](policies/continuous-refactoring.md) for fingerprint limits and exception review. `--audit-json FILE` imports saved cargo-audit evidence; it does not execute a security scan or establish current lockfile identity. Verification recommendations in reports are **not_run**, never results.
 
-The report states each finding's confidence (`heuristic` < `syntactic` < `compiler`/`measured`) and which analyzers were skipped. The AST engine has **no type information**: a finding is an investigation lead, never proof of an allocation, vulnerability or bad architecture. Before acting on a plan item, read the code at its location and pick an option (keep / minimal / structural). Record one disposition with evidence: fixed and verified, legitimate use retained, or investigation deferred with the unresolved question. Valid code need not change or acquire repeated comments to silence a signal. The tool never edits code.
+The report states each finding's confidence (`heuristic` < `syntactic` < `compiler`/`measured`) and which analyzers were skipped. The AST engine has **no type information**: a finding is an investigation lead, never proof of an allocation, vulnerability or bad architecture. Adjacent unsafe comment evidence stays **unverified**: unlabeled prose or a marker without an argument receives a review signal; a literal `SAFETY:` label never proves soundness. Before acting on a plan item, read the code at its location and pick an option (keep / minimal / structural). Record one disposition with evidence: fixed and verified, legitimate use retained, or investigation deferred with the unresolved question. Valid code need not change or acquire repeated comments to silence a signal. The tool never edits code.
 
 **B. Design**: for substantive changes, compare at least two options, including a minimal correction. For existing debt, compare keep-as-is / minimal fix / structural alternative using evidence; do not perform an opportunistic repo-wide rewrite. State trade-offs in readability, ownership, allocations, latency, compile time, API and invariants. Don't cargo-cult the Reddit case study. **If proposing additional crates**, analyze all four layout options via `references/crate-boundaries.md`, record `templates/crate-decision.md`, and default to the least complex design that meets observed needs. Never silently add crates during an unrelated refactor.
 

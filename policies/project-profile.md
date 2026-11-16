@@ -7,12 +7,14 @@ The native parser supports a **strict TOML subset**, retaining a dependency-free
 | Section | Fields | Effect |
 | --- | --- | --- |
 | Root | `schema_version = 1`, `profile` | Versioned schema and service/engine/library/ffi/prototype emphasis |
-| `[scan]` | `hot`, `exclude`, `include_tests`, `max_file_lines`, `max_fn_lines`, `max_fields`, `max_methods` | Source selection and candidate thresholds; no type or performance proof |
+| `[scan]` | `hot`, `exclude`, `include_tests`, `include_ignored`, `max_file_lines`, `max_fn_lines`, `max_fields`, `max_methods` | Source selection and candidate thresholds; no type or performance proof |
 | `[ci]` | `fail_on` | report severity gate: info/medium/high/blocker |
 | `[contracts]` | `edition`, `msrv`, `critical_paths`, `unsafe_policy`, `allocation_budget`, `determinism` | Visible review inputs; **not automatically enforced** |
 | `[[exceptions]]` | `rule`, `path`, `max_severity`, `reason`, `owner`, `expires` | Exact rule/path waiver for report gates, retained in output |
 
 CLI flags override corresponding config values. A supplied `--hot` or `--exclude` list replaces that entire configured list; repeated CLI flags accumulate within that list. `include_tests = true` can be selected explicitly or through the chosen config. The legacy audit/triage outputs use scan settings but do not implement report gates, contracts or exceptions.
+
+The default `include_ignored = false` uses Git's tracked/non-ignored source selection when available. `--include-ignored` overrides this for filesystem discovery. [Source scope](source-scope.md) describes fallback, child repositories and the shared manifest inventory.
 
 Contracts express what a human or agent must verify: compare edition/MSRV with actual manifests/toolchains; measure allocations at the named boundary; test deterministic replay; inspect each unsafe invariant. A configured budget or intent cannot count as an achieved result. They appear in report context for that purpose.
 

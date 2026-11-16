@@ -62,6 +62,11 @@ pub fn apply(o: &mut Opts) -> Result<(), String> {
             o.include_tests = v.as_bool().unwrap();
         }
     }
+    if absent("--include-ignored") {
+        if let Some(v) = c.values.get("scan.include_ignored") {
+            o.include_ignored = v.as_bool().unwrap();
+        }
+    }
     for (key, flag, dest) in [
         ("scan.max_file_lines", "--max-file-lines", &mut o.max_file_lines),
         ("scan.max_fn_lines", "--max-fn-lines", &mut o.max_fn_lines),
@@ -199,7 +204,7 @@ fn validate_value(key: &str, v: &Value) -> Result<(), String> {
                 Err(format!("{key} requires a string array"))
             }
         }
-        "scan.include_tests" if v.as_bool().is_some() => Ok(()),
+        "scan.include_tests" | "scan.include_ignored" if v.as_bool().is_some() => Ok(()),
         "scan.max_file_lines" | "scan.max_fn_lines" | "scan.max_fields" | "scan.max_methods" => {
             if v.as_f64().is_some_and(|n| n > 0.0 && n.fract() == 0.0 && n <= u32::MAX as f64) {
                 Ok(())

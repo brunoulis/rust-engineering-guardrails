@@ -5,14 +5,16 @@
 //! if resolution is impossible it falls back to `--no-deps` and says so.
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::{cargo, first_line};
 use crate::json::{self, Value};
 use crate::model::{AnalyzerRun, Confidence, Finding, Severity};
 use crate::rules;
 
-pub fn analyze(root: &Path) -> (Vec<Finding>, AnalyzerRun) {
+/// The location basis comes from Cargo output: selecting a workspace member
+/// does not make metadata paths relative to that member.
+pub fn analyze(root: &Path) -> (Vec<Finding>, AnalyzerRun, PathBuf) {
     let full = cargo(root).args(["metadata", "--format-version", "1", "--frozen"]).output();
     let (out, resolved, note) = match full {
         Ok(o) if o.status.success() => (o, true, String::new()),
@@ -20,20 +22,20 @@ pub fn analyze(root: &Path) -> (Vec<Finding>, AnalyzerRun) {
             let why = first_line(&String::from_utf8_lossy(&o.stderr));
             match cargo(root).args(["metadata", "--format-version", "1", "--no-deps"]).output() {
                 Ok(o2) if o2.status.success() => (o2, false, format!("dependency graph unavailable ({why}); workspace-only checks")),
-                Ok(o2) => return (vec![], AnalyzerRun::failed("metadata", first_line(&String::from_utf8_lossy(&o2.stderr)))),
-                Err(e) => return (vec![], AnalyzerRun::failed("metadata", e.to_string())),
+                Ok(o2) => return (vec![], AnalyzerRun::failed("metadata", first_line(&String::from_utf8_lossy(&o2.stderr))), root.to_path_buf()),
+                Err(e) => return (vec![], AnalyzerRun::failed("metadata", e.to_string()), root.to_path_buf()),
             }
         }
-        Err(e) => return (vec![], AnalyzerRun::failed("metadata", format!("cargo not available: {e}"))),
+        Err(e) => return (vec![], AnalyzerRun::failed("metadata", format!("cargo not available: {e}")), root.to_path_buf()),
     };
     let text = String::from_utf8_lossy(&out.stdout);
     match json::parse(&text) {
         Ok(v) => {
             let findings = analyze_value(&v, resolved);
             let detail = if resolved { "resolved dependency graph (--frozen)".to_string() } else { note };
-            (findings, AnalyzerRun::ran("metadata", detail))
+            (findings, AnalyzerRun::ran("metadata", detail), PathBuf::from(v.str_of("workspace_root")))
         }
-        Err(e) => (vec![], AnalyzerRun::failed("metadata", format!("invalid cargo metadata JSON: {e}"))),
+        Err(e) => (vec![], AnalyzerRun::failed("metadata", format!("invalid cargo metadata JSON: {e}")), root.to_path_buf()),
     }
 }
 

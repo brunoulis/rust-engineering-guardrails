@@ -14,6 +14,7 @@ mod analyzers;
 mod baseline;
 mod cli;
 mod config;
+mod discovery;
 mod glob;
 mod json;
 mod legacy;
@@ -22,6 +23,7 @@ mod report;
 mod rules;
 mod sarif;
 mod scan;
+mod scope;
 mod security;
 mod verification;
 
@@ -85,6 +87,7 @@ fn scan_config(o: &Opts) -> Result<scan::ScanConfig, String> {
         max_methods: o.max_methods,
         engine: o.engine,
         include_tests: o.include_tests,
+        include_ignored: o.include_ignored,
     })
 }
 
@@ -121,6 +124,7 @@ fn full_report(o: &Opts) -> Result<i32, String> {
     let bench_input = load_bench(o).transpose()?;
     let scan_res = scan::run(&scan_config(o)?)?;
     let mut detail = format!("{} engine, {} files", scan_res.engine, scan_res.files_scanned);
+    detail.push_str(&format!("; {}", scan_res.scope_note));
     if scan_res.test_files_skipped > 0 {
         detail.push_str(&format!("; {} test file(s) skipped (--include-tests to scan)", scan_res.test_files_skipped));
     }
@@ -137,35 +141,53 @@ fn full_report(o: &Opts) -> Result<i32, String> {
         findings.extend(f);
         analyzers.push(run);
     };
-    let has_manifest = o.root.join("Cargo.toml").is_file();
-    let no_manifest = || "no Cargo.toml at root".to_string();
+    let projects = if o.metadata || o.clippy || (o.llvm_lines && o.llvm_lines_file.is_none()) { discovery::projects(&o.root, &scan_res.cargo_manifests)? } else { vec![] };
+    let no_manifest = || "no Cargo.toml at root or in selected scope".to_string();
 
     if !o.metadata {
         extend((vec![], AnalyzerRun::skipped("metadata", "--no-metadata")));
-    } else if has_manifest {
-        extend(metadata::analyze(&o.root));
-    } else {
+    } else if projects.is_empty() {
         extend((vec![], AnalyzerRun::skipped("metadata", no_manifest())));
+    } else {
+        for project in &projects {
+            let (f, run, base) =
+                if let Some(reason) = &project.scope_error { (vec![], AnalyzerRun::failed("metadata", reason), project.root.clone()) } else { metadata::analyze(&project.root) };
+            extend(project.rebase(&o.root, &base, (f, run)));
+        }
     }
 
     if !o.clippy {
         extend((vec![], AnalyzerRun::skipped("clippy", "not requested (--with clippy); builds the project")));
-    } else if has_manifest {
-        eprintln!("running cargo clippy (builds the project)…");
-        extend(clippy::analyze(&o.root, &o.clippy_args));
-    } else {
+    } else if projects.is_empty() {
         extend((vec![], AnalyzerRun::failed("clippy", no_manifest())));
+    } else {
+        for project in &projects {
+            let result = if let Some(reason) = &project.scope_error {
+                (vec![], AnalyzerRun::failed("clippy", reason))
+            } else {
+                eprintln!("running cargo clippy for {} (builds the project)…", project.manifest);
+                clippy::analyze(&project.root, &o.clippy_args)
+            };
+            extend(project.rebase(&o.root, &project.root, result));
+        }
     }
 
     if !o.llvm_lines {
         extend((vec![], AnalyzerRun::skipped("llvm-lines", "not requested (--with llvm-lines)")));
     } else if let Some(file) = &o.llvm_lines_file {
         extend(llvm_lines::analyze(&o.root, llvm_lines::Source::File(file), o.llvm_top));
-    } else if has_manifest {
-        eprintln!("running cargo llvm-lines --release (builds the project)…");
-        extend(llvm_lines::analyze(&o.root, llvm_lines::Source::Run { package: o.llvm_lines_package.as_deref() }, o.llvm_top));
-    } else {
+    } else if projects.is_empty() {
         extend((vec![], AnalyzerRun::failed("llvm-lines", no_manifest())));
+    } else {
+        for project in &projects {
+            let result = if let Some(reason) = &project.scope_error {
+                (vec![], AnalyzerRun::failed("llvm-lines", reason))
+            } else {
+                eprintln!("running cargo llvm-lines --release for {} (builds the project)…", project.manifest);
+                llvm_lines::analyze(&project.root, llvm_lines::Source::Run { package: o.llvm_lines_package.as_deref() }, o.llvm_top)
+            };
+            extend(project.rebase(&o.root, &project.root, result));
+        }
     }
 
     let bench_res = match bench_input {

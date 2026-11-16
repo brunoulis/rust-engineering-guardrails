@@ -1,10 +1,12 @@
-# Rust Engineering Guardrails 1.2.0
+# Rust Engineering Guardrails 1.3.0
 
 *Correctness by construction. Guardrails prevent engineering mistakes; they do not impose architecture.*
 
 Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. One command produces a report covering **architecture, ownership, concurrency, safety, quality and potential performance**, with a **prioritized, verifiable refactoring plan**. The tool proposes changes; it never edits the audited code. Works as a Claude Code, Codex or Hermes skill.
 
-Skill 1.2.0 adds a shared engineering philosophy, separate [task modes](modes/audit.md) and [domain profiles](profiles/README.md), [FFI review](references/ffi.md), [security policy](policies/security-supply-chain.md) and [risk-based verification](references/verification-intelligence.md). Auditor 1.1.0 adds debt baselines, SARIF 2.1.0, project configuration, dated exceptions, saved cargo-audit imports and verification recommendations. The existing AST, confidence model and benchmark comparison remain. Native-window guidance from 1.1.0 remains in [native-layout](references/native-layout.md).
+Skill 1.3.0 and auditor 1.2.0 improve [audit precision](policies/source-scope.md): Git-aware source selection, nested Cargo discovery from the same inventory, path-directed test modules and explicit unverified unsafe-comment review. Maintained untracked files stay in scope; `--include-ignored` broadens selection intentionally. Filesystem fallback is reported when Git selection is unavailable. No additional Cargo dependencies are required.
+
+The shared philosophy, [task modes](modes/audit.md), [domain profiles](profiles/README.md), [FFI review](references/ffi.md), [security policy](policies/security-supply-chain.md), [risk-based verification](references/verification-intelligence.md), baselines, SARIF, configuration and benchmark comparison remain. Native-window guidance remains in [native-layout](references/native-layout.md).
 
 ## Continuous quality
 
@@ -52,11 +54,13 @@ The report always says **what was checked and what was skipped**. It contains a 
 | `cargo llvm-lines` | `--with llvm-lines` or `--llvm-lines-file` | **yes** | measured | Functions dominating LLVM IR (monomorphization → compile time, binary size). Also runs `--locked`. |
 | Benchmarks | `--criterion DIR --baseline A --candidate B` or `--hyperfine A.json B.json` | no | measured | Per-benchmark verdict: *improved*, *regressed* or *inconclusive*. A change counts only when valid CIs at the same confidence level do not overlap **and** it exceeds `--noise` (default 2%). Missing/invalid uncertainty is an error; Criterion retains its supplied level and Hyperfine uses 95% Student-t intervals (a conservative df=30 bound above 31 samples). See `references/performance.md` for assumptions and input validation. `--max-regression` turns a regression into a blocker. Input with no matching baseline/candidate pair (such as a misspelled name) is an error, never an empty pass. |
 
-Build with `--no-default-features` for the zero-dependency core (heuristic engine only). The AST engine's only dependencies are `syn` 2 and `proc-macro2`.
+Build with `--no-default-features` for the zero-dependency Rust core (heuristic engine only). The AST engine's only dependencies are `syn` 2 and `proc-macro2`. Git is optional for ignore-aware inventory; the core runs with a visible filesystem fallback without it. Both engines share source and Cargo manifest selection.
 
 > **Security and side effects:** `clippy` and `llvm-lines` compile the target, so build scripts and proc-macros **execute**. Use them on trusted code only. They write build artifacts to the project's `target/` directory, as any cargo build does. Sources and `Cargo.lock` are never modified.
 
-`--fail-on SEVERITY` exits 1 when a finding reaches that severity **or when a requested analyzer failed**, because a gate must not pass on checks that did not run. The source scan skips VCS and tool caches, and only cargo's own build directories (`target/` next to a `Cargo.toml`, or anything tagged `CACHEDIR.TAG`). A module directory such as `src/build/` is scanned. The report lists what it skipped.
+`--fail-on SEVERITY` exits 1 when a finding reaches that severity **or when a requested analyzer failed**, because a gate must not pass on checks that did not run. With a baseline, findings must be new/escalated and non-exempt. Default source scope uses Git-selected files when available and otherwise reports filesystem fallback; `--include-ignored` requests the broader filesystem view. VCS/tool caches, child repositories, worktree stores and Cargo target/cache directories remain excluded. A module directory such as `src/build/` is scanned when selected. The report lists its selection policy and skipped directories.
+
+At a root without Cargo.toml, metadata and requested build-backed analyzers discover nested projects from the same inventory, deduplicate their Cargo workspace identities and report per-manifest provenance. Path-directed test modules and their transitive helpers are excluded unless production also uses them. Adjacent unsafe prose without a SAFETY label remains a medium review signal; labeled comment evidence is also explicitly unverified. Neither category establishes soundness. See [source scope and precision](policies/source-scope.md).
 
 ## Other commands
 
@@ -76,7 +80,13 @@ rust-guardrails topology .               # raw cargo metadata --no-deps
 - Profiles shift emphasis: spawn-in-loop and unbounded-channel signals stay medium in `service` until admission/backlog bounds are reviewed; `library` raises `unwrap`/`panic`/`process::exit`; `ffi` raises `unsafe impl`/`transmute`; `prototype` lowers quality debt.
 - Thresholds (`--max-file-lines` 1000, `--max-fn-lines` 80, `--max-fields` 15, `--max-methods` 30) are project choices. A wide type with few methods is reported as a data record (info), not a God object.
 
-## Validation performed for 1.2.0 / auditor 1.1.0
+## Validation performed for 1.3.0 / auditor 1.2.0
+
+The [real-project regression](docs/evaluations/2026-11-16-projecttelemetrygui-precision.md) compares old/new binaries on 534 unchanged application source/manifest/lock hashes. Automatic report noise falls from 4,491 to 1,359 signals, chiefly by excluding ignored copies. Equal maintained scope removes nine test-only findings (1,342 → 1,333 syntactic signals), retains four comment findings as unverified review evidence and discovers ten Cargo projects. Nine dependency graphs resolve frozen; one is explicitly workspace-only offline. Additional metadata contributes 26 separate signals.
+
+Final local checks: **137 default tests**, **93 core tests** (4 intentionally ignored), both strict Clippy variants, rustfmt, SARIF schema, baseline/negative controls and skill validation pass. The independent final review verifies production bin/build-script retention as well as test-only exclusion. These are precision and verification results, not an application soundness/performance certificate.
+
+## Historical validation for 1.2.0 / auditor 1.1.0
 
 Validated locally on Windows with Rust 1.96.0. Default tests including opt-in Clippy integrations: **95 passed** (54 unit, 11 baseline, 16 legacy/report CLI, 5 config, 9 security/verification). Dependency-free build: **70 passed, 4 ignored**; specialized AST/build-backed cases were checked in the default run. Counts include the shared JSON helper's tests in integration test binaries.
 
@@ -95,6 +105,7 @@ Run on Windows 11 with Rust 1.96.0 and clippy 0.1.96:
 
 ## Limitations
 
+- Git ignore selection is optional; fallback without Git can include ignored source copies. `--include-ignored` intentionally broadens scope. Tracked sources remain selected even when an ignore pattern matches them. AST test-module discovery does not expand macros or cfg_attr paths; unsafe comment classification is lexical evidence, not semantic verification.
 - No type information in the AST engine: `.clone()` on an `Arc` and on a `Vec` look the same. Use `--with clippy` for type-aware confirmation.
 - Known filesystem I/O is matched by explicit `std::fs` operation spelling; pure values such as `Permissions::clone` are not I/O. Aliases, re-exports and method receiver types are unresolved, so calls can be missed or shadowed.
 - Context is lexical: calls through helper functions, trait dispatch and macro-generated code are not followed. Only well-known macro bodies (`format!`, `println!`, `vec!`, `assert*!`, …) are inspected.

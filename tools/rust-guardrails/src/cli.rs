@@ -21,6 +21,7 @@ SOURCE OPTIONS (report, audit, triage):
   --hot GLOB            mark matching files as known hot paths (repeatable)
   --exclude GLOB        skip matching files (repeatable)
   --include-tests       also scan tests/, benches/ and #[cfg(test)] module files
+  --include-ignored     include Git-ignored source files and Cargo manifests
   --engine auto|ast|heuristic   (default auto: ast when compiled in)
   --max-file-lines N (1000)  --max-fn-lines N (80)  --max-fields N (15)  --max-methods N (30)
   --limit N             findings shown per section (default 30)
@@ -81,6 +82,7 @@ pub struct Opts {
     pub hot: Vec<String>,
     pub exclude: Vec<String>,
     pub include_tests: bool,
+    pub include_ignored: bool,
     pub engine: EngineChoice,
     pub max_file_lines: usize,
     pub max_fn_lines: usize,
@@ -122,6 +124,7 @@ impl Opts {
             hot: vec![],
             exclude: vec![],
             include_tests: false,
+            include_ignored: false,
             engine: EngineChoice::Auto,
             max_file_lines: 1000,
             max_fn_lines: 80,
@@ -187,6 +190,7 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Opts, String> {
             "--hot" => o.hot.push(next(&mut args, &a)?),
             "--exclude" => o.exclude.push(next(&mut args, &a)?),
             "--include-tests" => o.include_tests = true,
+            "--include-ignored" => o.include_ignored = true,
             "--engine" => {
                 let v = next(&mut args, &a)?;
                 o.engine = EngineChoice::parse(&v).ok_or(format!("invalid --engine: {v}"))?;

@@ -1,7 +1,7 @@
 //! Source scanning: file discovery, engine selection (syn AST or text heuristic),
 //! crate-wide type metrics and profile-based severity adjustment.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -12,9 +12,6 @@ use crate::rules;
 #[cfg(feature = "ast")]
 pub mod ast;
 pub mod heuristic;
-
-/// Never Rust sources worth auditing; skipped at any depth.
-const ALWAYS_SKIP: &[&str] = &[".git", ".hg", ".svn", "node_modules", ".venv", "venv", ".next", ".idea", ".vscode", ".cache", "__pycache__"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EngineChoice {
@@ -48,6 +45,7 @@ pub struct ScanConfig {
     pub engine: EngineChoice,
     /// Also scan `tests/`, `benches/` and `#[cfg(test)]` module files.
     pub include_tests: bool,
+    pub include_ignored: bool,
 }
 
 /// Per-type size facts collected by the AST engine and merged crate-wide.
@@ -66,8 +64,17 @@ pub struct FileScan {
     pub types: Vec<(String, TypeStat)>,
     /// The file carries `#![cfg(test)]`.
     pub test_only: bool,
-    /// Names of out-of-line `#[cfg(test)] mod name;` declarations in this file.
-    pub test_modules: Vec<String>,
+    /// Out-of-line module source candidates, resolved relative to the scan root.
+    pub modules: Vec<ModuleRef>,
+}
+
+#[derive(Debug)]
+pub struct ModuleRef {
+    pub candidates: Vec<String>,
+    pub test_only: bool,
+    /// A path-directed source has a different default child directory in Rust.
+    pub path_attr: bool,
+    pub in_path_file: bool,
 }
 
 #[derive(Debug)]
@@ -81,6 +88,9 @@ pub struct ScanResult {
     pub test_files_skipped: usize,
     /// Directories not descended into (VCS, cargo target dirs, tool caches).
     pub dirs_skipped: Vec<String>,
+    pub scope_note: String,
+    /// Cargo analysis consumes the same selected inventory as the source scan.
+    pub cargo_manifests: Vec<PathBuf>,
 }
 
 pub fn ast_available() -> bool {
@@ -100,19 +110,203 @@ fn is_test_path(rel: &str) -> bool {
     rel.split('/').rev().skip(1).any(|seg| seg == "tests" || seg == "benches")
 }
 
-/// Files that `#[cfg(test)] mod name;` in `rel` would load.
-fn test_module_files(rel: &str, name: &str) -> [String; 2] {
-    let (dir, file) = rel.rsplit_once('/').unwrap_or(("", rel));
-    let stem = file.trim_end_matches(".rs");
-    let base = if matches!(stem, "lib" | "main" | "mod") {
-        dir.to_string()
-    } else if dir.is_empty() {
-        stem.to_string()
-    } else {
-        format!("{dir}/{stem}")
-    };
-    let join = |p: String| if base.is_empty() { p } else { format!("{base}/{p}") };
-    [join(format!("{name}.rs")), join(format!("{name}/mod.rs"))]
+/// Only remove a test-reachable file when no production root also reaches it.
+/// Unreferenced sources stay in scope: this is module selection, not dead-code analysis.
+fn test_module_files(files: &[Scanned], target_roots: &BTreeSet<String>) -> BTreeSet<String> {
+    let by_path: BTreeMap<_, _> = files.iter().enumerate().map(|(i, s)| (s.rel.as_str(), i)).collect();
+    // A source can be loaded both normally and with #[path]. Track both module
+    // directory contexts rather than guessing the child directory from its stem.
+    let mut edges = vec![Vec::new(); files.len() * 2];
+    let mut incoming = BTreeSet::new();
+    for (i, s) in files.iter().enumerate() {
+        for m in &s.scan.modules {
+            for candidate in &m.candidates {
+                if let Some(&j) = by_path.get(candidate.as_str()) {
+                    let target = j * 2 + usize::from(m.path_attr);
+                    edges[i * 2 + usize::from(m.in_path_file)].push((target, m.test_only));
+                    incoming.insert(j);
+                }
+            }
+        }
+    }
+    let mut tests = BTreeSet::new();
+    let mut production = BTreeSet::new();
+    let mut pending: Vec<_> = files
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| {
+            let target = target_roots.contains(&s.rel);
+            (!incoming.contains(&i) || target || s.scan.test_only).then_some((i * 2 + usize::from(target), s.scan.test_only))
+        })
+        .collect();
+    while let Some((i, test_context)) = pending.pop() {
+        let reached = if test_context { &mut tests } else { &mut production };
+        if !reached.insert(i) {
+            continue;
+        }
+        for &(j, test) in &edges[i] {
+            pending.push((j, test_context || test || files[j / 2].scan.test_only));
+        }
+    }
+    let test_files: BTreeSet<_> = tests.iter().map(|i| i / 2).collect();
+    let production_files: BTreeSet<_> = production.iter().map(|i| i / 2).collect();
+    test_files.difference(&production_files).map(|&i| files[i].rel.clone()).collect()
+}
+
+/// Narrow target hints, not a Cargo TOML parser. Recognized paths establish extra
+/// production roots; ambiguous target syntax retains package sources conservatively.
+fn production_roots(root: &Path, manifests: &[PathBuf], files: &[Scanned]) -> (BTreeSet<String>, bool) {
+    fn plain_string(value: &str) -> Option<&str> {
+        let quote = value.chars().next()?;
+        if !matches!(quote, '\'' | '"') {
+            return None;
+        }
+        let rest = &value[1..];
+        let end = rest.find(quote)?;
+        let tail = rest[end + 1..].trim();
+        if (!tail.is_empty() && !tail.starts_with('#')) || (quote == '"' && rest[..end].contains('\\')) {
+            return None;
+        }
+        Some(&rest[..end])
+    }
+    let mut roots = BTreeSet::new();
+    let mut package_dirs = Vec::new();
+    let mut uncertain = false;
+    for manifest in manifests {
+        let dir = manifest.parent().unwrap_or(root);
+        package_dirs.push(dir);
+        let mut hints = Vec::new();
+        let (mut autolib, mut autobins, mut autoexamples, mut build_script, mut lib_table, mut lib_path) = (true, true, true, true, false, false);
+        let mut ambiguous = false;
+        let mut section = "";
+        let source = fs::read_to_string(manifest).unwrap_or_else(|_| {
+            ambiguous = true;
+            String::new()
+        });
+        // Multiline values can contain apparent table headers. Do not guess.
+        ambiguous |= source.contains("\"\"\"") || source.contains("'''");
+        for raw in source.lines() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.starts_with('[') {
+                let header = line.split('#').next().unwrap_or("").trim();
+                section = match header {
+                    "[package]" => "package",
+                    "[lib]" => {
+                        lib_table = true;
+                        "lib"
+                    }
+                    "[[bin]]" => {
+                        hints.push(None);
+                        "bin"
+                    }
+                    "[[example]]" => {
+                        hints.push(None);
+                        "example"
+                    }
+                    _ => {
+                        let table = header.trim_matches(['[', ']', ' ', '\'', '"']);
+                        if matches!(table, "lib" | "bin" | "example" | "package") || ["lib.", "bin.", "example.", "package."].iter().any(|prefix| table.starts_with(prefix)) {
+                            ambiguous = true;
+                        }
+                        "other"
+                    }
+                };
+                continue;
+            }
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            let (key, value) = (key.trim().trim_matches(['\'', '"']), value.trim());
+            if section.is_empty() && (matches!(key, "lib" | "bin" | "example" | "package") || ["lib.", "bin.", "example.", "package."].iter().any(|prefix| key.starts_with(prefix)))
+            {
+                ambiguous = true;
+            }
+            if section == "package" && matches!(key, "autolib" | "autobins" | "autoexamples") {
+                let parsed = match value.split('#').next().unwrap_or("").trim() {
+                    "true" => Some(true),
+                    "false" => Some(false),
+                    _ => None,
+                };
+                match (key, parsed) {
+                    ("autolib", Some(v)) => autolib = v,
+                    ("autobins", Some(v)) => autobins = v,
+                    ("autoexamples", Some(v)) => autoexamples = v,
+                    _ => ambiguous = true,
+                }
+            }
+            if section == "package" && key == "build" {
+                match value.split('#').next().unwrap_or("").trim() {
+                    "false" => build_script = false,
+                    "true" => build_script = true,
+                    _ => {
+                        build_script = false;
+                        if let Some(path) = plain_string(value).filter(|p| !Path::new(p).is_absolute()) {
+                            hints.push(Some(dir.join(path)));
+                        } else {
+                            ambiguous = true;
+                        }
+                    }
+                }
+            }
+            if matches!(section, "lib" | "bin" | "example") && key == "path" {
+                if let Some(path) = plain_string(value) {
+                    if Path::new(path).is_absolute() {
+                        ambiguous = true;
+                    } else {
+                        let path = dir.join(path);
+                        if section == "lib" {
+                            lib_path = true;
+                            hints.push(Some(path));
+                        } else if let Some(hint) = hints.last_mut() {
+                            *hint = Some(path);
+                        }
+                    }
+                } else {
+                    ambiguous = true;
+                }
+            }
+        }
+        // A named target declaration without a plain path needs Cargo's inference.
+        ambiguous |= hints.iter().any(Option::is_none);
+        let explicit: BTreeSet<_> = hints.into_iter().flatten().filter_map(|p| p.canonicalize().ok()).collect();
+        for file in files {
+            let path = root.join(&file.rel);
+            if path.canonicalize().ok().is_some_and(|p| explicit.contains(&p)) {
+                roots.insert(file.rel.clone());
+                continue;
+            }
+            let Ok(local) = path.strip_prefix(dir) else {
+                continue;
+            };
+            let local = local.to_string_lossy().replace('\\', "/");
+            let default_lib = local == "src/lib.rs" && !lib_path && (autolib || lib_table);
+            let default_bin = autobins
+                && (local == "src/main.rs"
+                    || local.strip_prefix("src/bin/").is_some_and(|p| {
+                        let parts: Vec<_> = p.split('/').collect();
+                        (parts.len() == 1 && p.ends_with(".rs")) || (parts.len() == 2 && parts[1] == "main.rs")
+                    }));
+            let default_example = autoexamples
+                && local.strip_prefix("examples/").is_some_and(|p| {
+                    let parts: Vec<_> = p.split('/').collect();
+                    (parts.len() == 1 && p.ends_with(".rs")) || (parts.len() == 2 && parts[1] == "main.rs")
+                });
+            if ambiguous || default_lib || default_bin || default_example || (build_script && local == "build.rs") {
+                roots.insert(file.rel.clone());
+            }
+        }
+        uncertain |= ambiguous;
+    }
+    for file in files {
+        let path = root.join(&file.rel);
+        if !package_dirs.iter().any(|dir| path.starts_with(dir)) && matches!(file.rel.as_str(), "lib.rs" | "main.rs") {
+            roots.insert(file.rel.clone());
+        }
+    }
+    (roots, uncertain)
 }
 
 pub fn run(c: &ScanConfig) -> Result<ScanResult, String> {
@@ -122,14 +316,13 @@ pub fn run(c: &ScanConfig) -> Result<ScanResult, String> {
         EngineChoice::Ast if ast_available() => true,
         EngineChoice::Ast => return Err("this build has no AST engine; rebuild with `--features ast` or use `--engine heuristic`".into()),
     };
-    let mut files = Vec::new();
-    let mut dirs_skipped = Vec::new();
-    gather(&c.root, &c.root, &mut files, &mut dirs_skipped)?;
+    let mut inventory = crate::scope::discover(&c.root, &c.exclude, c.include_ignored)?;
+    let cargo_manifests: Vec<PathBuf> = inventory.files.iter().filter(|p| p.file_name().is_some_and(|n| n == "Cargo.toml")).cloned().collect();
     let mut findings = Vec::new();
     let mut scanned_files = Vec::new();
     let mut test_files_skipped = 0usize;
     let mut fallbacks = 0usize;
-    for path in files {
+    for path in inventory.files.into_iter().filter(|p| p.extension().is_some_and(|x| x == "rs")) {
         let rel = path.strip_prefix(&c.root).map_err(|e| e.to_string())?.to_string_lossy().replace('\\', "/");
         if glob::any(&c.exclude, &rel) {
             continue;
@@ -162,7 +355,11 @@ pub fn run(c: &ScanConfig) -> Result<ScanResult, String> {
         scanned_files.push(Scanned { rel, hot, lines: content.lines().count(), scan, extra });
     }
     // Drop test-only files now that every out-of-line `#[cfg(test)] mod` is known.
-    let test_files: std::collections::BTreeSet<String> = scanned_files.iter().flat_map(|s| s.scan.test_modules.iter().flat_map(|m| test_module_files(&s.rel, m))).collect();
+    let (target_roots, uncertain_targets) = production_roots(&c.root, &cargo_manifests, &scanned_files);
+    if uncertain_targets {
+        inventory.note.push_str("; unsupported Cargo target syntax: package sources retained conservatively during test-module filtering; target identity is unverified");
+    }
+    let test_files = test_module_files(&scanned_files, &target_roots);
     if !c.include_tests {
         let before = scanned_files.len();
         scanned_files.retain(|s| !s.scan.test_only && !test_files.contains(&s.rel));
@@ -218,12 +415,21 @@ pub fn run(c: &ScanConfig) -> Result<ScanResult, String> {
         (true, 0) => "ast",
         (true, _) => "ast+heuristic-fallback",
     };
-    Ok(ScanResult { files_scanned: scanned, lines_scanned: lines, engine, findings, test_files_skipped, dirs_skipped })
+    Ok(ScanResult {
+        files_scanned: scanned,
+        lines_scanned: lines,
+        engine,
+        findings,
+        test_files_skipped,
+        dirs_skipped: inventory.dirs_skipped,
+        scope_note: inventory.note,
+        cargo_manifests,
+    })
 }
 
 #[cfg(feature = "ast")]
 fn ast_scan(c: &ScanConfig, rel: &str, content: &str) -> Result<FileScan, String> {
-    ast::scan(rel, content, c.max_fn_lines)
+    ast::scan_with_tests(rel, content, c.max_fn_lines, c.include_tests)
 }
 
 #[cfg(not(feature = "ast"))]
@@ -253,33 +459,4 @@ pub fn adjust_for_profile(p: Profile, f: &mut Finding) {
         (Profile::Prototype, _) if f.category == Category::Quality && f.severity == Severity::Medium => f.severity = Severity::Info,
         _ => {}
     }
-}
-
-/// Skips VCS/tool caches anywhere, and cargo build directories: a `target` directory
-/// next to a `Cargo.toml`, or any directory cargo tagged with `CACHEDIR.TAG`. Ordinary
-/// source directories such as `src/build/` are scanned.
-fn skip_dir(dir: &Path, name: &str) -> bool {
-    ALWAYS_SKIP.contains(&name) || dir.join("CACHEDIR.TAG").is_file() || (name == "target" && dir.parent().is_some_and(|p| p.join("Cargo.toml").is_file()))
-}
-
-fn gather(root: &Path, here: &Path, out: &mut Vec<PathBuf>, skipped: &mut Vec<String>) -> Result<(), String> {
-    let mut entries = fs::read_dir(here).map_err(|e| format!("{}: {e}", here.display()))?.collect::<Result<Vec<_>, _>>().map_err(|e| e.to_string())?;
-    entries.sort_by_key(|e| e.file_name());
-    for e in entries {
-        let ty = e.file_type().map_err(|err| err.to_string())?;
-        if ty.is_symlink() {
-            continue;
-        }
-        let p = e.path();
-        if ty.is_dir() {
-            if skip_dir(&p, &e.file_name().to_string_lossy()) {
-                skipped.push(p.strip_prefix(root).unwrap_or(&p).to_string_lossy().replace('\\', "/"));
-            } else {
-                gather(root, &p, out, skipped)?;
-            }
-        } else if ty.is_file() && p.extension().is_some_and(|x| x == "rs") {
-            out.push(p);
-        }
-    }
-    Ok(())
 }

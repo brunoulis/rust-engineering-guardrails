@@ -12,28 +12,52 @@
 //! It still has no type information: `x.clone()` on an `Arc` and on a `Vec` look the same.
 
 use proc_macro2::Span;
+use std::path::{Component, Path, PathBuf};
 use syn::parse::ParseStream;
 use syn::punctuated::Punctuated;
 use syn::spanned::Spanned;
 use syn::visit::{self, Visit};
 use syn::{Attribute, Expr, GenericArgument, PathArguments, Token, Type};
 
-use super::{FileScan, TypeStat};
+use super::{FileScan, ModuleRef, TypeStat};
 use crate::model::{excerpt, Confidence, Finding};
 use crate::rules;
 
+#[cfg(test)]
 pub fn scan(rel: &str, content: &str, max_fn_lines: usize) -> Result<FileScan, String> {
+    scan_with_tests(rel, content, max_fn_lines, false)
+}
+
+pub fn scan_with_tests(rel: &str, content: &str, max_fn_lines: usize, include_tests: bool) -> Result<FileScan, String> {
     let file = syn::parse_file(content).map_err(|e| {
         let at = e.span().start();
         format!("syn parse error at {}:{}: {e}", at.line, at.column + 1)
     })?;
-    if is_test_attr(&file.attrs) {
+    let test_only = is_test_attr(&file.attrs);
+    let mut modules = Modules::new(rel, test_only, false);
+    modules.visit_file(&file);
+    let mut path_modules = Modules::new(rel, test_only, true);
+    path_modules.visit_file(&file);
+    modules.out.extend(path_modules.out);
+    if test_only && !include_tests {
         // `#![cfg(test)]`: the whole file is test code.
-        return Ok(FileScan { test_only: true, ..FileScan::default() });
+        return Ok(FileScan { test_only: true, modules: modules.out, ..FileScan::default() });
     }
     let lines: Vec<&str> = content.lines().collect();
-    let mut v =
-        Visitor { rel, lines: &lines, max_fn_lines, out: FileScan::default(), loop_depth: 0, async_depth: 0, awaited_next: false, async_loop_base: 0, stmt_line: 0, fn_name: None };
+    let mut v = Visitor {
+        rel,
+        lines: &lines,
+        comments: source_comments(content),
+        include_tests,
+        max_fn_lines,
+        out: FileScan { test_only, modules: modules.out, ..FileScan::default() },
+        loop_depth: 0,
+        async_depth: 0,
+        awaited_next: false,
+        async_loop_base: 0,
+        stmt_line: 0,
+        fn_name: None,
+    };
     v.visit_file(&file);
     Ok(v.out)
 }
@@ -41,6 +65,8 @@ pub fn scan(rel: &str, content: &str, max_fn_lines: usize) -> Result<FileScan, S
 struct Visitor<'a> {
     rel: &'a str,
     lines: &'a [&'a str],
+    comments: Vec<SourceComment>,
+    include_tests: bool,
     max_fn_lines: usize,
     out: FileScan,
     loop_depth: usize,
@@ -55,6 +81,177 @@ struct Visitor<'a> {
     /// multi-line statement).
     stmt_line: usize,
     fn_name: Option<String>,
+}
+
+/// Module discovery is independent of finding traversal so children inside skipped
+/// inline test modules still contribute their inherited test context.
+struct Modules {
+    dir: PathBuf,
+    path_dir: PathBuf,
+    test_only: bool,
+    in_path_file: bool,
+    out: Vec<ModuleRef>,
+}
+
+fn module_path(attrs: &[Attribute]) -> Option<String> {
+    attrs.iter().find_map(|a| {
+        if !a.path().is_ident("path") {
+            return None;
+        }
+        match &a.meta {
+            syn::Meta::NameValue(nv) => match &nv.value {
+                Expr::Lit(syn::ExprLit { lit: syn::Lit::Str(s), .. }) => Some(s.value()),
+                _ => None,
+            },
+            _ => None,
+        }
+    })
+}
+
+/// Normalize relative paths without opening anything outside the selected inventory.
+fn relative_path(path: PathBuf) -> Option<String> {
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::Normal(p) => out.push(p),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if !out.pop() {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+    }
+    Some(out.to_string_lossy().replace('\\', "/"))
+}
+
+impl Modules {
+    fn new(rel: &str, test_only: bool, in_path_file: bool) -> Self {
+        let path = Path::new(rel);
+        let path_dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
+        let stem = path.file_stem().and_then(|p| p.to_str()).unwrap_or("");
+        let dir = if in_path_file || matches!(stem, "lib" | "main" | "mod") { path_dir.clone() } else { path_dir.join(stem) };
+        Self { dir, path_dir, test_only, in_path_file, out: Vec::new() }
+    }
+}
+
+impl<'ast> Visit<'ast> for Modules {
+    fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
+        let test_only = self.test_only || is_test_attr(&m.attrs);
+        let path = module_path(&m.attrs);
+        if m.content.is_none() {
+            let path_attr = path.is_some();
+            let candidates = match path {
+                Some(path) => vec![self.path_dir.join(path)],
+                None => vec![self.dir.join(format!("{}.rs", m.ident)), self.dir.join(m.ident.to_string()).join("mod.rs")],
+            }
+            .into_iter()
+            .filter_map(relative_path)
+            .collect();
+            self.out.push(ModuleRef { candidates, test_only, path_attr, in_path_file: self.in_path_file });
+        } else {
+            let next = path.map_or_else(|| self.dir.join(m.ident.to_string()), |p| self.path_dir.join(p));
+            let saved = (std::mem::replace(&mut self.dir, next.clone()), std::mem::replace(&mut self.path_dir, next), self.test_only);
+            self.test_only = test_only;
+            visit::visit_item_mod(self, m);
+            (self.dir, self.path_dir, self.test_only) = saved;
+        }
+    }
+}
+
+struct SourceComment {
+    start: usize,
+    end: usize,
+    standalone: bool,
+    text: String,
+}
+
+/// Use token spans to protect every literal, including raw strings and literals in
+/// macros, before locating actual comments. A string saying SAFETY is not prose.
+fn source_comments(source: &str) -> Vec<SourceComment> {
+    fn literals(tokens: proc_macro2::TokenStream, out: &mut Vec<Span>) {
+        for token in tokens {
+            match token {
+                proc_macro2::TokenTree::Literal(lit) => out.push(lit.span()),
+                proc_macro2::TokenTree::Group(group) => literals(group.stream(), out),
+                _ => {}
+            }
+        }
+    }
+    let mut offsets = vec![0];
+    for (i, b) in source.bytes().enumerate() {
+        if b == b'\n' {
+            offsets.push(i + 1);
+        }
+    }
+    let mut spans = Vec::new();
+    let tokens = source.parse::<proc_macro2::TokenStream>().unwrap_or_default();
+    literals(tokens, &mut spans);
+    let offset = |p: proc_macro2::LineColumn| {
+        // Span columns count Unicode characters, not UTF-8 bytes.
+        let base = offsets.get(p.line.saturating_sub(1)).copied().unwrap_or(source.len());
+        base + source[base..].char_indices().nth(p.column).map_or(source.len() - base, |(i, _)| i)
+    };
+    let mut protected: Vec<_> = spans
+        .into_iter()
+        .map(|s| (offset(s.start()), offset(s.end())))
+        .filter(|&(start, end)| {
+            // proc_macro2 lowers doc comments to synthetic #[doc = "..."] tokens;
+            // their literal span covers original comment text, not a source literal.
+            let text = &source[start..end];
+            !text.starts_with("//") && !text.starts_with("/*")
+        })
+        .collect();
+    protected.sort_unstable();
+    let bytes = source.as_bytes();
+    let (mut i, mut literal, mut line) = (0, 0, 1);
+    let mut out = Vec::new();
+    while i < bytes.len() {
+        while literal < protected.len() && protected[literal].1 <= i {
+            literal += 1;
+        }
+        if literal < protected.len() && protected[literal].0 <= i {
+            let end = protected[literal].1;
+            line += bytes[i..end].iter().filter(|&&b| b == b'\n').count();
+            i = end;
+            continue;
+        }
+        if bytes[i..].starts_with(b"//") || bytes[i..].starts_with(b"/*") {
+            let start = i;
+            let start_line = line;
+            let standalone = source[offsets[line - 1]..i].trim().is_empty();
+            if bytes[i + 1] == b'/' {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+            } else {
+                i += 2;
+                let mut depth = 1;
+                while i < bytes.len() && depth > 0 {
+                    if bytes[i..].starts_with(b"/*") {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i..].starts_with(b"*/") {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        if bytes[i] == b'\n' {
+                            line += 1;
+                        }
+                        i += 1;
+                    }
+                }
+            }
+            out.push(SourceComment { start: start_line, end: line, standalone, text: source[start..i].to_string() });
+        } else {
+            if bytes[i] == b'\n' {
+                line += 1;
+            }
+            i += 1;
+        }
+    }
+    out
 }
 
 /// The 1-based source line, trimmed, for evidence.
@@ -167,44 +364,41 @@ impl Visitor<'_> {
         self.out.findings.push(f);
     }
 
-    /// True if `line` itself, or the contiguous comment/attribute block directly above it,
-    /// mentions SAFETY (same convention as `clippy::undocumented_unsafe_blocks`): a comment
-    /// justifying one unsafe block does not cover the next one.
-    fn has_safety_comment(&self, line: usize) -> bool {
-        let mentions = |l: &str| l.contains("SAFETY") || l.contains("Safety:");
-        let Some(own) = line.checked_sub(1).and_then(|i| self.lines.get(i)) else { return false };
-        if mentions(own) {
-            return true;
-        }
-        let mut i = line - 1; // index of the line above, exclusive upper bound
-        while i > 0 {
-            i -= 1;
-            let t = self.lines[i].trim();
-            if t.starts_with("//") || t.starts_with("#[") || t.starts_with("#!") {
-                if mentions(t) {
-                    return true;
-                }
-            } else if t.ends_with("*/") {
-                // Block comment ending here: scan up to its opening `/*`.
-                loop {
-                    if mentions(self.lines[i]) {
-                        return true;
-                    }
-                    if self.lines[i].contains("/*") || i == 0 {
-                        break;
-                    }
-                    i -= 1;
-                }
+    /// Adjacent comment evidence is unverified. Do not bridge a blank line or a
+    /// completed statement, and never classify a marker as a safety argument.
+    fn safety_evidence(&self, line: usize) -> Option<(bool, bool)> {
+        let mut selected: Vec<_> = self.comments.iter().filter(|c| c.start <= line && c.end >= line).collect();
+        let mut above = line.saturating_sub(1);
+        while above > 0 {
+            if let Some(c) = self.comments.iter().rev().find(|c| c.end == above && c.standalone) {
+                selected.push(c);
+                above = c.start.saturating_sub(1);
+            } else if self.lines.get(above - 1).is_some_and(|l| l.trim().starts_with("#[")) {
+                above -= 1;
             } else {
-                return false;
+                break;
             }
         }
-        false
+        if selected.is_empty() {
+            return None;
+        }
+        let text = selected.iter().rev().map(|c| c.text.as_str()).collect::<Vec<_>>().join(" ");
+        let marker = text.contains("SAFETY:") || text.contains("Safety:");
+        let words = text.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty() && !w.eq_ignore_ascii_case("safety")).count();
+        Some((marker, words >= 3))
     }
 
-    /// SAFETY justification on the unsafe line, above it, or above its enclosing statement.
-    fn is_justified(&self, line: usize) -> bool {
-        self.has_safety_comment(line) || (self.stmt_line > 0 && self.stmt_line < line && self.has_safety_comment(self.stmt_line))
+    fn has_safety_comment(&self, line: usize) -> bool {
+        self.safety_evidence(line).is_some_and(|(marker, substantive)| marker && substantive)
+    }
+
+    fn unsafe_comment_rule(&self, line: usize) -> &'static str {
+        let evidence = self.safety_evidence(line).or_else(|| (self.stmt_line > 0 && self.stmt_line < line).then(|| self.safety_evidence(self.stmt_line)).flatten());
+        match evidence {
+            Some((true, true)) => "unsafe_block",
+            Some((true, false) | (false, true)) => "unsafe_safety_comment_review",
+            _ => "unsafe_without_safety_comment",
+        }
     }
 
     /// Visits `f` as code that runs on a blocking thread, not on the async executor.
@@ -293,11 +487,8 @@ const EXPR_MACROS: &[&str] = &[
 
 impl<'ast> Visit<'ast> for Visitor<'_> {
     fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
-        if !is_test_attr(&m.attrs) {
+        if self.include_tests || !is_test_attr(&m.attrs) {
             visit::visit_item_mod(self, m);
-        } else if m.content.is_none() {
-            // `#[cfg(test)] mod tests;` — its file is test code; scan/mod.rs drops it.
-            self.out.test_modules.push(m.ident.to_string());
         }
     }
 
@@ -309,7 +500,7 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 
     fn visit_item_fn(&mut self, f: &'ast syn::ItemFn) {
-        if is_test_attr(&f.attrs) {
+        if !self.include_tests && is_test_attr(&f.attrs) {
             return;
         }
         let name = f.sig.ident.to_string();
@@ -324,7 +515,7 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 
     fn visit_impl_item_fn(&mut self, f: &'ast syn::ImplItemFn) {
-        if is_test_attr(&f.attrs) {
+        if !self.include_tests && is_test_attr(&f.attrs) {
             return;
         }
         let name = f.sig.ident.to_string();
@@ -343,7 +534,7 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 
     fn visit_item_impl(&mut self, i: &'ast syn::ItemImpl) {
-        if is_test_attr(&i.attrs) {
+        if !self.include_tests && is_test_attr(&i.attrs) {
             return;
         }
         if let Some(u) = &i.unsafety {
@@ -559,7 +750,7 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
 
     fn visit_expr_unsafe(&mut self, u: &'ast syn::ExprUnsafe) {
         let line = line_of(u.unsafe_token.span);
-        let rule = if self.is_justified(line) { "unsafe_block" } else { "unsafe_without_safety_comment" };
+        let rule = self.unsafe_comment_rule(line);
         self.push(rule, line, None);
         visit::visit_expr_unsafe(self, u);
     }
@@ -658,6 +849,22 @@ mod tests {
 
     fn rules_of(src: &str) -> Vec<(String, usize)> {
         scan("f.rs", src, 80).unwrap().findings.into_iter().map(|f| (f.rule, f.line)).collect()
+    }
+
+    #[test]
+    fn unicode_literals_do_not_hide_real_comments() {
+        let source = "fn f() { let café = \"é // SAFETY: fake literal\"; /* SAFETY: p is valid. */ let x = unsafe { *p }; }";
+        let comments = source_comments(source);
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "/* SAFETY: p is valid. */");
+        assert!(rules_of(source).contains(&("unsafe_block".into(), 1)));
+    }
+
+    #[test]
+    fn doc_comment_tokens_do_not_hide_source_comments() {
+        let comments = source_comments("/// SAFETY: p is valid.\nunsafe { *p }");
+        assert_eq!(comments.len(), 1);
+        assert_eq!(comments[0].text, "/// SAFETY: p is valid.");
     }
 
     #[test]
@@ -790,7 +997,8 @@ fn t2() { None::<u8>.unwrap(); }
         let inner = scan("t.rs", "#![cfg(test)]\nfn f() { None::<u8>.unwrap(); }\n", 80).unwrap();
         assert!(inner.test_only && inner.findings.is_empty());
         let outline = scan("lib.rs", "#[cfg(test)]\nmod tests;\nmod real;\n", 80).unwrap();
-        assert_eq!(outline.test_modules, vec!["tests".to_string()]);
+        assert_eq!(outline.modules[0].candidates, vec!["tests.rs", "tests/mod.rs"]);
+        assert!(outline.modules[0].test_only);
     }
 
     #[test]

@@ -12,6 +12,9 @@ profile = 'service'
 hot = ['src/simulation/**']
 exclude = ['vendor/**']
 include_tests = false
+# Respect Git ignore selection when Git is available. Set true only for an
+# intentional audit of ignored sources; VCS/caches/child repos remain excluded.
+include_ignored = false
 max_file_lines = 1000
 max_fn_lines = 80
 max_fields = 15

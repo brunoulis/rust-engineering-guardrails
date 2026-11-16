@@ -58,6 +58,7 @@ const NOT_ACTIONABLE: &[&str] = &["workspace_summary", "bench_improvement", "ben
 /// Syntactic rule ↔ clippy lint pairs that describe the same concern.
 const CORROBORATIONS: &[(&str, &str)] = &[
     ("unsafe_without_safety_comment", "clippy::undocumented_unsafe_blocks"),
+    ("unsafe_safety_comment_review", "clippy::undocumented_unsafe_blocks"),
     ("unsafe_fn_without_safety_doc", "clippy::missing_safety_doc"),
     ("clone_in_loop", "clippy::redundant_clone"),
     ("clone_call", "clippy::redundant_clone"),
@@ -83,7 +84,11 @@ pub fn corroborate(findings: &mut Vec<Finding>) -> usize {
             // A merge confirms the lead; it never turns a pattern match into a blocker.
             f.severity = f.severity.max(sev).min(Severity::High);
             f.confidence = f.confidence.max(conf);
-            f.message = format!("{} [confirmed by {lint}]", f.message);
+            f.message = if f.rule == "unsafe_safety_comment_review" {
+                format!("{} [documentation convention confirmed by {lint}; soundness is unverified]", f.message)
+            } else {
+                format!("{} [confirmed by {lint}]", f.message)
+            };
         }
     }
     let mut k = 0;
@@ -622,6 +627,20 @@ mod tests {
         assert_eq!((v[0].severity, v[0].confidence), (Severity::High, Confidence::Compiler));
         assert!(v[0].message.contains("confirmed by clippy::undocumented_unsafe_blocks"));
         assert_eq!(v[1].line, 9);
+    }
+
+    #[test]
+    fn safety_comment_corroboration_confirms_documentation_convention_only() {
+        let mut source = Finding::new("unsafe_safety_comment_review", Category::Safety, Severity::Medium, Confidence::Syntactic)
+            .at("ffi.rs", 3)
+            .msg("Review the adjacent explanation; soundness is unverified");
+        source.evidence = "// valid for the FFI owner".into();
+        let mut findings = vec![source, Finding::new("clippy::undocumented_unsafe_blocks", Category::Safety, Severity::Medium, Confidence::Compiler).at("ffi.rs", 3)];
+        assert_eq!(corroborate(&mut findings), 1);
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].severity, Severity::Medium);
+        assert!(findings[0].message.contains("documentation convention confirmed"));
+        assert!(findings[0].message.contains("soundness is unverified"));
     }
 
     #[test]
