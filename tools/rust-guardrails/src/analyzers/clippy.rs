@@ -45,7 +45,7 @@ pub fn analyze(root: &Path, extra_args: &[String]) -> (Vec<Finding>, AnalyzerRun
     c.args(["-A", "unknown_lints"]);
     let t = match run_timed(c) {
         Ok(t) => t,
-        Err(e) => return (vec![], AnalyzerRun::skipped("clippy", format!("cannot run cargo clippy: {e}"))),
+        Err(e) => return (vec![], AnalyzerRun::failed("clippy", format!("cannot run cargo clippy: {e}"))),
     };
     let stdout = String::from_utf8_lossy(&t.output.stdout);
     if !stdout.contains("\"reason\":\"build-finished\"") && !t.output.status.success() {
@@ -56,15 +56,19 @@ pub fn analyze(root: &Path, extra_args: &[String]) -> (Vec<Finding>, AnalyzerRun
     }
     let parsed = parse_messages(root, &ws_root, &stdout);
     let errors = parsed.findings.iter().filter(|f| f.severity == Severity::Blocker).count();
+    // Diagnostics remain useful when compilation fails, but they do not make a
+    // failed/incomplete verification eligible for a passing gate or debt snapshot.
+    let succeeded = parsed.build_ok && t.output.status.success() && errors == 0;
     let detail = format!(
         "{} diagnostic(s), {} compile error(s), build {} in {:.1}s; extra lints: {}; lints capped at warn",
         parsed.findings.len(),
         errors,
-        if parsed.build_ok { "succeeded" } else { "FAILED" },
+        if succeeded { "succeeded" } else { "FAILED" },
         t.secs,
         AUDIT_LINTS.len()
     );
-    (parsed.findings, AnalyzerRun::ran("clippy", detail))
+    let run = if succeeded { AnalyzerRun::ran("clippy", detail) } else { AnalyzerRun::failed("clippy", detail) };
+    (parsed.findings, run)
 }
 
 fn workspace_root(root: &Path) -> Option<std::path::PathBuf> {
@@ -81,7 +85,7 @@ pub struct Parsed {
 pub fn parse_messages(root: &Path, ws_root: &Path, stdout: &str) -> Parsed {
     let mut findings = Vec::new();
     let mut seen = BTreeSet::new();
-    let mut build_ok = true;
+    let mut build_ok = false;
     for line in stdout.lines().filter(|l| l.starts_with('{')) {
         let Ok(v) = json::parse(line) else { continue };
         match v.str_of("reason") {

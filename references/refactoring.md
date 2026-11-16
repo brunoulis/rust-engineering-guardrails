@@ -1,5 +1,7 @@
 # Intelligent Refactoring: quality without speculative rewrites
 
+When reviewing a change continuously, apply [the baseline and exception policy](../policies/continuous-refactoring.md). Examine changed APIs, invariants, locks/copies and benchmarks independently of alert counts. Use [the optional evidence assessment](../policies/evidence-assessment.md) when dimensions need separate conclusions.
+
 ## Purpose and activation
 
 Use this guide when a Rust repository **compiles but remains hard to understand, test, maintain, or operate**, or when an agent is asked to improve existing code. The aim is to improve the engineering outcome while preserving the agreed behavior. A refactor is not automatically a speedup, and a redesign that changes interfaces or runtime behavior is a migration, not a purely mechanical refactor.

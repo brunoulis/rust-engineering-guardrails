@@ -34,7 +34,7 @@ pub fn analyze(root: &Path, src: Source, top: usize) -> (Vec<Finding>, AnalyzerR
         },
         Source::Run { package } => {
             if !available(root) {
-                return (vec![], AnalyzerRun::skipped("llvm-lines", "cargo-llvm-lines not installed (cargo install cargo-llvm-lines)"));
+                return (vec![], AnalyzerRun::failed("llvm-lines", "requested cargo-llvm-lines unavailable; install it separately if appropriate"));
             }
             let mut c = cargo(root);
             // --locked: never create or rewrite Cargo.lock in the audited project.
@@ -50,6 +50,9 @@ pub fn analyze(root: &Path, src: Source, top: usize) -> (Vec<Finding>, AnalyzerR
         }
     };
     let rows = parse(&text);
+    if rows.is_empty() {
+        return (vec![], AnalyzerRun::failed("llvm-lines", format!("{detail}; no parseable rows; expected cargo llvm-lines output")));
+    }
     let total = rows.iter().find(|r| r.name == "(TOTAL)").map_or(0, |r| r.lines);
     let mut findings = Vec::new();
     for r in rows.iter().filter(|r| r.name != "(TOTAL)" && r.lines_pct >= 1.0).take(top) {

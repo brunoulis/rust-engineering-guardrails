@@ -24,3 +24,15 @@ jobs:
         run: cargo run --quiet --release --manifest-path .agents/skills/rust-engineering-guardrails/tools/rust-guardrails/Cargo.toml -- report . --profile service --format markdown --output rust-audit.md && cat rust-audit.md
       # Optional hard gate: only compiler errors and budgeted benchmark regressions are blockers.
       # - run: cargo run ... -- report . --with clippy --fail-on blocker
+      # Optional reviewed debt gate (requires a committed baseline and installed tool).
+      # Never regenerate the baseline in this job. Configuration and accepted debt
+      # must be reviewed; matching existing debt is not proof of correctness.
+      # - name: New debt gate
+      #   run: rust-guardrails report . --baseline rust-baseline.json --fail-on high --format sarif --output rust-audit.sarif
+      # - name: Security policy gates (requires project-approved installed tools)
+      #   run: |
+      #     cargo audit
+      #     cargo deny check
+      #     cargo vet
+      # Keep required security gates separate from saved-report imports. A saved
+      # report is not proof of a current scan or of the current lockfile's identity.

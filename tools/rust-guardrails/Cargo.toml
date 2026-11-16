@@ -1,9 +1,9 @@
 [package]
 name = "rust-guardrails"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 rust-version = "1.96"
-description = "Read-only Rust auditor: syntactic scan, cargo metadata, clippy, llvm-lines and benchmark comparison, with a prioritized refactoring plan"
+description = "Read-only Rust auditor with evidence-based plans, debt baselines, SARIF, project profiles and benchmark comparison"
 license = "MIT"
 publish = false
 

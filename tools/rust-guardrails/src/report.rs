@@ -20,6 +20,9 @@ pub struct Report {
     pub lines_scanned: usize,
     pub analyzers: Vec<AnalyzerRun>,
     pub findings: Vec<Finding>,
+    pub baseline: Option<crate::baseline::Comparison>,
+    pub exceptions: Vec<Option<String>>,
+    pub project_profile: Option<Value>,
     pub bench: Option<BenchResult>,
     pub plan: Vec<PlanItem>,
     pub plan_omitted: usize,
@@ -126,6 +129,19 @@ pub fn build_plan(findings: &[Finding], root: &str, limit: usize) -> (Vec<PlanIt
                     r.reference.to_string(),
                     r.characterize_first,
                 ),
+                None if rule.starts_with("rustsec::") || rule.starts_with("dependency_warning::") => (
+                    format!("`{rule}`: {}", hits[0].message),
+                    format!("Imported dependency evidence ({count} occurrence(s)); freshness, current lockfile identity and reachability remain unverified."),
+                    "Retain only with a reviewed advisory applicability assessment or justified dated acceptance; preserve the evidence.".to_string(),
+                    "Verify the affected dependency version/features and advisory conditions; apply the smallest compatible remediation when warranted.".to_string(),
+                    "Replace or isolate the dependency only when compatibility and maintenance evidence justify that cost.".to_string(),
+                    vec![
+                        "cargo audit --json (retain exit status, tool/database provenance, settings and lockfile identity)".to_string(),
+                        "cargo deny check and cargo vet when adopted by project policy; verify affected consumer contracts".to_string(),
+                    ],
+                    "policies/security-supply-chain.md".to_string(),
+                    true,
+                ),
                 None => {
                     // Compiler/clippy diagnostic.
                     let g = rules::generic_play(category);
@@ -211,7 +227,36 @@ impl Report {
     }
 
     pub fn max_severity(&self) -> Option<Severity> {
-        self.findings.iter().map(|f| f.severity).max()
+        self.findings
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| self.baseline.as_ref().is_none_or(|b| b.is_new[*i]) && self.exceptions.get(*i).is_none_or(Option::is_none))
+            .map(|(_, f)| f.severity)
+            .max()
+    }
+
+    fn gate_notes(&self) -> String {
+        let mut out = String::new();
+        if let Some(b) = &self.baseline {
+            let new = b.is_new.iter().filter(|n| **n).count();
+            let _ = writeln!(
+                out,
+                "\nDebt baseline: {new} new/escalated, {} existing, {} resolved/unmatched. Gate considers new, non-exempt findings; all findings remain in the report.",
+                b.is_new.len() - new,
+                b.resolved_count
+            );
+        }
+        for (i, reason) in self.exceptions.iter().enumerate() {
+            if let Some(reason) = reason {
+                let f = &self.findings[i];
+                let _ = writeln!(out, "Exception: {} [{}] — {}", loc(&f.file, &[f.line]), f.rule, reason);
+            }
+        }
+        if let Some(profile) = &self.project_profile {
+            let _ = writeln!(out, "\nProject profile contracts (review context; not proof of enforcement): {}", profile.to_json());
+        }
+        out.push_str(&crate::verification::to_text(&self.findings, self.profile));
+        out
     }
 
     fn sorted_findings(&self, cat: Category) -> Vec<&Finding> {
@@ -273,6 +318,7 @@ impl Report {
         for f in top.iter().take(limit) {
             let _ = writeln!(o, "  {:<7} {:<12} {} [{}] {}", f.severity.as_str(), f.category.as_str(), loc(&f.file, &[f.line]), f.rule, f.message);
         }
+        o.push_str(&self.gate_notes());
         o
     }
 
@@ -384,12 +430,13 @@ impl Report {
             let _ = writeln!(o);
         }
         let _ = writeln!(o, "## Limitations\n\n- The syntactic engine has no type information: a `.clone()` of an `Arc` and of a `Vec` look the same. Run with `--with clippy` for type-aware lints.\n- Loop and async context are lexical; calls through helper functions are not followed.\n- `large_type` merges same-named types from different modules.\n- llvm-lines measures compile-time IR volume, not runtime speed. Benchmarks are only as representative as their workload.\n- Thresholds (`--max-file-lines`, `--max-fn-lines`, `--max-fields`, `--max-methods`) are project choices, not universal rules.");
+        o.push_str(&self.gate_notes());
         o
     }
 
     // ------------------------------------------------------------------ json
     pub fn to_json(&self) -> String {
-        let finding = |f: &Finding| {
+        let finding = |(i, f): (usize, &Finding)| {
             obj([
                 ("rule", f.rule.as_str().into()),
                 ("category", f.category.as_str().into()),
@@ -400,6 +447,9 @@ impl Report {
                 ("hot", f.hot.into()),
                 ("message", f.message.as_str().into()),
                 ("evidence", f.evidence.as_str().into()),
+                ("fingerprint", crate::baseline::fingerprint(f).into()),
+                ("baseline_state", self.baseline.as_ref().map_or(Value::Null, |b| if b.is_new[i] { "new" } else { "existing" }.into())),
+                ("exception", self.exceptions.get(i).and_then(Option::as_ref).map_or(Value::Null, |s| s.as_str().into())),
             ])
         };
         let counts = self.counts();
@@ -481,6 +531,9 @@ impl Report {
         };
         obj([
             ("schema_version", 2usize.into()),
+            ("baseline", self.baseline.as_ref().map_or(Value::Null, crate::baseline::Comparison::to_json)),
+            ("project_profile", self.project_profile.clone().unwrap_or(Value::Null)),
+            ("verification", crate::verification::to_json(&self.findings, self.profile)),
             ("tool_version", env!("CARGO_PKG_VERSION").into()),
             ("disclaimer", DISCLAIMER.into()),
             ("root", self.root.as_str().into()),
@@ -504,7 +557,7 @@ impl Report {
             ("plan", plan),
             ("plan_omitted", self.plan_omitted.into()),
             ("benchmarks", bench),
-            ("findings", Value::Arr(self.findings.iter().map(finding).collect())),
+            ("findings", Value::Arr(self.findings.iter().enumerate().map(finding).collect())),
         ])
         .to_json()
     }

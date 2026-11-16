@@ -24,7 +24,7 @@ pub fn analyze(root: &Path) -> (Vec<Finding>, AnalyzerRun) {
                 Err(e) => return (vec![], AnalyzerRun::failed("metadata", e.to_string())),
             }
         }
-        Err(e) => return (vec![], AnalyzerRun::skipped("metadata", format!("cargo not available: {e}"))),
+        Err(e) => return (vec![], AnalyzerRun::failed("metadata", format!("cargo not available: {e}"))),
     };
     let text = String::from_utf8_lossy(&out.stdout);
     match json::parse(&text) {

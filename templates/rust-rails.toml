@@ -1,0 +1,44 @@
+# Copy to the audited root as .rust-rails.toml; paths are relative to that root.
+# Schema 1 is a strict TOML subset: one key per line; single-line quoted strings,
+# string arrays (single line), booleans and nonnegative decimal integers. Comments
+# and trailing array commas work. Dotted keys, multiline strings/arrays, inline
+# tables, bare dates, floats and other TOML syntax are rejected, not ignored.
+# CLI options override the corresponding config field; --hot/--exclude replace
+# their configured arrays when supplied. --config FILE selects another profile.
+schema_version = 1
+profile = 'service'
+
+[scan]
+hot = ['src/simulation/**']
+exclude = ['vendor/**']
+include_tests = false
+max_file_lines = 1000
+max_fn_lines = 80
+max_fields = 15
+max_methods = 30
+
+[ci]
+# Applies to report; a baseline limits this gate to new findings.
+fail_on = 'high'
+
+[contracts]
+# Review inputs only. The auditor reports these contracts; it does not verify
+# edition/MSRV, unsafe policy, allocation counts or deterministic replay.
+edition = '2021'
+msrv = '1.85'
+critical_paths = ['src/simulation/**']
+unsafe_policy = 'Require reviewed invariants at every unsafe boundary'
+allocation_budget = 'No allocation in the simulation tick; verify by measurement'
+determinism = 'Replay the same input log and compare state digests'
+
+# Exceptions apply to report gates and remain visible in reports. They match an
+# exact rule and root-relative file, through the expiry date inclusive (UTC).
+# Expired exceptions and severity escalations fail normally. Blockers cannot be
+# waived. Replace this example only after reviewing the concrete finding.
+# [[exceptions]]
+# rule = 'unfinished_code'
+# path = 'src/prototype.rs'
+# max_severity = 'medium'
+# reason = 'Experimental entry point excluded from the released product'
+# owner = 'runtime-team'
+# expires = '2027-01-31'

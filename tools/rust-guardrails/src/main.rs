@@ -11,14 +11,19 @@
 //! refactoring plan. Nothing edits the audited code.
 
 mod analyzers;
+mod baseline;
 mod cli;
+mod config;
 mod glob;
 mod json;
 mod legacy;
 mod model;
 mod report;
 mod rules;
+mod sarif;
 mod scan;
+mod security;
+mod verification;
 
 use std::fs;
 use std::process;
@@ -107,6 +112,10 @@ fn load_bench(o: &Opts) -> Option<Result<bench::BenchResult, String>> {
 }
 
 fn full_report(o: &Opts) -> Result<i32, String> {
+    let debt_path = o.debt_baseline.clone().or_else(|| if o.criterion.is_none() { o.baseline.as_ref().map(std::path::PathBuf::from) } else { None });
+    // Read comparison input before any explicit writes; refreshing a snapshot must
+    // never change the exit status for the scan that generated it.
+    let debt = debt_path.as_deref().map(baseline::Snapshot::read).transpose()?;
     // Requested benchmark input that cannot be read or matched is an error, not a skipped
     // section: a gate must not pass because of a typo in a baseline name.
     let bench_input = load_bench(o).transpose()?;
@@ -145,7 +154,7 @@ fn full_report(o: &Opts) -> Result<i32, String> {
         eprintln!("running cargo clippy (builds the project)…");
         extend(clippy::analyze(&o.root, &o.clippy_args));
     } else {
-        extend((vec![], AnalyzerRun::skipped("clippy", no_manifest())));
+        extend((vec![], AnalyzerRun::failed("clippy", no_manifest())));
     }
 
     if !o.llvm_lines {
@@ -156,7 +165,7 @@ fn full_report(o: &Opts) -> Result<i32, String> {
         eprintln!("running cargo llvm-lines --release (builds the project)…");
         extend(llvm_lines::analyze(&o.root, llvm_lines::Source::Run { package: o.llvm_lines_package.as_deref() }, o.llvm_top));
     } else {
-        extend((vec![], AnalyzerRun::skipped("llvm-lines", no_manifest())));
+        extend((vec![], AnalyzerRun::failed("llvm-lines", no_manifest())));
     }
 
     let bench_res = match bench_input {
@@ -171,7 +180,16 @@ fn full_report(o: &Opts) -> Result<i32, String> {
         }
     };
 
+    if let Some(path) = &o.audit_json {
+        let (security_findings, run) = security::analyze(path)?;
+        findings.extend(security_findings);
+        analyzers.push(run);
+    } else {
+        analyzers.push(AnalyzerRun::skipped("cargo-audit", "no saved --audit-json input; supply-chain status is unknown"));
+    }
     report::corroborate(&mut findings);
+    let comparison = debt.map(|d| d.compare(&findings));
+    let exceptions = config::exception_indices(o, &findings);
     let root = o.root.display().to_string();
     let (plan, plan_omitted) = report::build_plan(&findings, &root, o.plan_limit);
     let rep = report::Report {
@@ -182,11 +200,15 @@ fn full_report(o: &Opts) -> Result<i32, String> {
         lines_scanned: scan_res.lines_scanned,
         analyzers,
         findings,
+        baseline: comparison,
+        exceptions,
+        project_profile: config::review_context(o),
         bench: bench_res,
         plan,
         plan_omitted,
     };
     let out = match o.format() {
+        "sarif" => sarif::render(&rep),
         "json" => rep.to_json() + "\n",
         "markdown" | "md" => rep.to_markdown(o.limit),
         _ => rep.to_text(o.limit),
@@ -195,6 +217,12 @@ fn full_report(o: &Opts) -> Result<i32, String> {
     // With a gate, a requested analyzer that failed counts as a failure: the gate cannot
     // pass on checks that did not run.
     let analyzer_failed = rep.analyzers.iter().any(|a| matches!(a.status, model::AnalyzerStatus::Failed { .. }));
+    if let Some(path) = &o.write_baseline {
+        if analyzer_failed {
+            return Err("cannot write a debt baseline while an analyzer failed".into());
+        }
+        baseline::Snapshot::write(path, &rep.findings)?;
+    }
     if o.fail_on.is_some() && analyzer_failed {
         eprintln!("--fail-on: an analyzer failed; see the report");
         return Ok(1);

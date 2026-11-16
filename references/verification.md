@@ -1,5 +1,7 @@
 # Verification and repo-level guardrails
 
+For specialized verification, first use [verification intelligence](verification-intelligence.md) to connect changed risks to techniques, prerequisites and remaining uncertainty. Use [security and supply-chain policy](../policies/security-supply-chain.md) for audit/deny/vet and untrusted inputs; [continuous refactoring](../policies/continuous-refactoring.md) for baseline gates. Report recommendations as not_run until actually executed.
+
 ## Basic gates
 
 Run only commands applicable to the repository, and report which actually ran:

@@ -24,7 +24,12 @@ SOURCE OPTIONS (report, audit, triage):
   --engine auto|ast|heuristic   (default auto: ast when compiled in)
   --max-file-lines N (1000)  --max-fn-lines N (80)  --max-fields N (15)  --max-methods N (30)
   --limit N             findings shown per section (default 30)
-  --format FMT          report: text|markdown|json; audit/triage/bench-compare: text|json
+  --format FMT          report: text|markdown|json|sarif; audit/triage/bench-compare: text|json
+  --config FILE         project profile (default ROOT/.rust-rails.toml)
+  --write-baseline FILE write a debt snapshot (report only)
+  --baseline FILE       compare debt in report without --criterion
+  --debt-baseline FILE  compare debt, including alongside Criterion
+  --audit-json FILE     import a saved cargo-audit JSON report
   --output FILE         write the report to FILE instead of stdout
 
 ANALYZERS (report). Source scan and cargo metadata (--frozen, read-only) run by default:
@@ -36,7 +41,9 @@ ANALYZERS (report). Source scan and cargo metadata (--frozen, read-only) run by 
   --llvm-lines-file F   parse saved `cargo llvm-lines` output instead of running it
   --llvm-top N          top functions reported (default 10)
   --plan-limit N        refactoring plan items (default 20)
-  --fail-on SEVERITY    exit 1 if any finding is at least info|medium|high|blocker
+  --fail-on SEVERITY    exit 1 for non-exempt findings at info|medium|high|blocker
+                       with a debt baseline, only new/escalated findings gate
+                       failed requested analyzers always fail a configured gate
 
 BENCHMARKS (report, bench-compare):
   --criterion DIR --baseline NAME [--candidate NAME (default new)]
@@ -62,6 +69,12 @@ pub enum Cmd {
 #[derive(Debug, Clone)]
 pub struct Opts {
     pub cmd: Cmd,
+    pub config: Option<PathBuf>,
+    pub project_config: Option<crate::config::ProjectConfig>,
+    pub explicit: Vec<String>,
+    pub write_baseline: Option<PathBuf>,
+    pub debt_baseline: Option<PathBuf>,
+    pub audit_json: Option<PathBuf>,
     pub root: PathBuf,
     pub rule: Option<String>,
     pub profile: Profile,
@@ -97,6 +110,12 @@ impl Opts {
     fn new(cmd: Cmd) -> Self {
         Opts {
             cmd,
+            config: None,
+            project_config: None,
+            explicit: vec![],
+            write_baseline: None,
+            debt_baseline: None,
+            audit_json: None,
             root: PathBuf::from("."),
             rule: None,
             profile: Profile::Service,
@@ -152,7 +171,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Opts, String> {
     let num = |v: String, flag: &str| v.parse::<usize>().map_err(|_| format!("invalid number for {flag}: {v}"));
     let pct = |v: String, flag: &str| v.parse::<f64>().ok().filter(|p| p.is_finite() && *p >= 0.0).ok_or(format!("invalid percentage for {flag}: {v}"));
     while let Some(a) = args.next() {
+        if a.starts_with('-') {
+            o.explicit.push(a.clone());
+        }
         match a.as_str() {
+            "--config" => o.config = Some(PathBuf::from(next(&mut args, &a)?)),
+            "--write-baseline" => o.write_baseline = Some(PathBuf::from(next(&mut args, &a)?)),
+            "--debt-baseline" => o.debt_baseline = Some(PathBuf::from(next(&mut args, &a)?)),
+            "--audit-json" => o.audit_json = Some(PathBuf::from(next(&mut args, &a)?)),
             "--help" | "-h" => return Ok(Opts::new(Cmd::Help)),
             "--profile" => {
                 let v = next(&mut args, &a)?;
@@ -224,13 +250,14 @@ pub fn parse<I: IntoIterator<Item = String>>(args: I) -> Result<Opts, String> {
             _ => return Err(format!("unrecognized argument: {a}")),
         }
     }
+    crate::config::apply(&mut o)?;
     validate(&o)?;
     Ok(o)
 }
 
 fn validate(o: &Opts) -> Result<(), String> {
     let formats: &[&str] = match o.cmd {
-        Cmd::Report => &["text", "markdown", "md", "json"],
+        Cmd::Report => &["text", "markdown", "md", "json", "sarif"],
         Cmd::Audit | Cmd::Triage | Cmd::BenchCompare => &["text", "json"],
         _ => &["text"],
     };
@@ -240,8 +267,14 @@ fn validate(o: &Opts) -> Result<(), String> {
     if o.max_file_lines == 0 || o.max_fn_lines == 0 {
         return Err("--max-file-lines and --max-fn-lines must be positive".into());
     }
-    if o.criterion.is_some() != o.baseline.is_some() {
+    if o.criterion.is_some() && o.baseline.is_none() {
         return Err("--criterion and --baseline must be used together".into());
+    }
+    if o.cmd != Cmd::Report && (o.write_baseline.is_some() || o.debt_baseline.is_some() || o.audit_json.is_some() || (o.baseline.is_some() && o.criterion.is_none())) {
+        return Err("debt baselines and --audit-json are only supported by report".into());
+    }
+    if o.debt_baseline.is_some() && o.baseline.is_some() && o.criterion.is_none() {
+        return Err("use --baseline or --debt-baseline for debt, not both".into());
     }
     if o.criterion.is_some() && o.hyperfine.is_some() {
         return Err("use either --criterion or --hyperfine, not both".into());

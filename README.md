@@ -1,8 +1,24 @@
-# Rust Engineering Guardrails 1.1.0
+# Rust Engineering Guardrails 1.2.0
+
+*Correctness by construction. Guardrails prevent engineering mistakes; they do not impose architecture.*
 
 Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. One command produces a report covering **architecture, ownership, concurrency, safety, quality and potential performance**, with a **prioritized, verifiable refactoring plan**. The tool proposes changes; it never edits the audited code. Works as a Claude Code, Codex or Hermes skill.
 
-Skill 1.1.0 adds [native-window content-fit guidance](references/native-layout.md): shared geometry for small surfaces, stable automatic fonts, requested versus effective bounds, and verification of the actual renderer and running artifact. The bundled auditor remains at 1.0.0; no automatic visual-collision detector or new CLI rule is claimed. Behavioral evaluation cases are in [docs/native-layout-scenarios.md](docs/native-layout-scenarios.md).
+Skill 1.2.0 adds a shared engineering philosophy, separate [task modes](modes/audit.md) and [domain profiles](profiles/README.md), [FFI review](references/ffi.md), [security policy](policies/security-supply-chain.md) and [risk-based verification](references/verification-intelligence.md). Auditor 1.1.0 adds debt baselines, SARIF 2.1.0, project configuration, dated exceptions, saved cargo-audit imports and verification recommendations. The existing AST, confidence model and benchmark comparison remain. Native-window guidance from 1.1.0 remains in [native-layout](references/native-layout.md).
+
+## Continuous quality
+
+```bash
+rust-guardrails report . --write-baseline rust-baseline.json --format json --output audit.json
+rust-guardrails report . --baseline rust-baseline.json --fail-on high --format sarif --output audit.sarif
+rust-guardrails report . --audit-json cargo-audit.json --format markdown
+```
+
+Review baseline creation separately from CI. Gates compare new/escalated findings, preserve duplicate counts and still fail when requested analyzers fail. Line movement is stable; changed excerpts or file renames may need reconciliation. Criterion retains `--criterion DIR --baseline NAME`; add `--debt-baseline FILE` when using both. See [continuous refactoring](policies/continuous-refactoring.md).
+
+Copy [templates/rust-rails.toml](templates/rust-rails.toml) to `.rust-rails.toml`, or select `--config FILE`. CLI flags take precedence. The native parser supports a documented strict TOML subset and rejects unsupported syntax. Scan settings and CI severity are applied; edition/MSRV, allocation, unsafe and determinism contracts are visible **review inputs, not verified results**. Exceptions require exact rule/path, reason, owner, maximum severity and expiry; reports retain them. See [project profile](policies/project-profile.md).
+
+Security imports validate saved cargo-audit data; they do not run a scan, establish freshness/current lockfile identity or prove exploitability. Separate audit/deny/vet and secret-scanning gates are described in [security policy](policies/security-supply-chain.md). Verification recommendations select techniques by signals/profile, with prerequisites and `not_run` status; no Miri, Loom, properties, mutation testing or sanitizer execution is implied. Inspect the actual change to find risks outside those signals. [Evidence assessment](policies/evidence-assessment.md) keeps unknown dimensions visible and supplies no automatic composite score.
 
 ## Install
 
@@ -23,7 +39,7 @@ rust-guardrails report . --profile engine --hot 'crates/sim/**' --deep --format 
 rust-guardrails report . --with clippy --criterion target/criterion --baseline before --candidate after --max-regression 5
 ```
 
-The report always says **what was checked and what was skipped**. It contains a summary matrix (dimension × severity), benchmark verdicts, and the plan. Each plan item gives its location, rule, confidence, why it matters, three options (*keep as is*, *minimal fix*, *structural*), whether to *characterize first*, verification commands, and a *done when* criterion. Formats: `text`, `markdown`, `json` (schema 2). `--fail-on high` returns exit code 1 for CI.
+The report always says **what was checked and what was skipped**. It contains a summary matrix (dimension × severity), benchmark verdicts, and the plan. Each plan item gives its location, rule, confidence, why it matters, three options (*keep as is*, *minimal fix*, *structural*), whether to *characterize first*, verification commands, and a *done when* criterion. Formats: `text`, `markdown`, `json` (schema 2, additive context/baseline/verification fields), `sarif` (2.1.0). `--fail-on high` returns exit code 1 for CI; malformed requested inputs return 2.
 
 ## Layered analyzers: light core, opt-in depth
 
@@ -60,7 +76,13 @@ rust-guardrails topology .               # raw cargo metadata --no-deps
 - Profiles shift emphasis: spawn-in-loop and unbounded-channel signals stay medium in `service` until admission/backlog bounds are reviewed; `library` raises `unwrap`/`panic`/`process::exit`; `ffi` raises `unsafe impl`/`transmute`; `prototype` lowers quality debt.
 - Thresholds (`--max-file-lines` 1000, `--max-fn-lines` 80, `--max-fields` 15, `--max-methods` 30) are project choices. A wide type with few methods is reported as a data record (info), not a God object.
 
-## Validation performed for 1.0.0
+## Validation performed for 1.2.0 / auditor 1.1.0
+
+Validated locally on Windows with Rust 1.96.0. Default tests including opt-in Clippy integrations: **95 passed** (54 unit, 11 baseline, 16 legacy/report CLI, 5 config, 9 security/verification). Dependency-free build: **70 passed, 4 ignored**; specialized AST/build-backed cases were checked in the default run. Counts include the shared JSON helper's tests in integration test binaries.
+
+Both feature variants pass strict Clippy and formatting. The two executable ownership/typestate examples pass. `quick_validate.py`, local Markdown reference checks and workflow/template YAML parsing pass. Baseline and configured reports pass the official OASIS SARIF 2.1.0 JSON schema using PowerShell `Test-Json`. [Validation details](docs/continuous-quality-validation.md) record commands, review fixes and limits; [behavioral evaluation](docs/evaluations/2026-11-16-continuous-quality.md) is explicitly a non-blind tabletop application.
+
+## Historical validation performed for 1.0.0
 
 Run on Windows 11 with Rust 1.96.0 and clippy 0.1.96:
 
