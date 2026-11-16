@@ -44,6 +44,27 @@ fn bounded_spawn_is_a_review_lead_not_a_high_gate_failure() {
 }
 
 #[test]
+#[cfg(feature = "ast")]
+fn documentation_findings_do_not_fail_high_gate_but_production_hazards_do() {
+    let dir = std::env::temp_dir().join(format!("rust-guardrails-doc-gate-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("lib.rs"), "pub unsafe fn read(p: *const u8) -> u8 { unsafe { *p } }").unwrap();
+    let args = ["report", dir.to_str().unwrap(), "--profile", "ffi", "--no-metadata", "--fail-on", "high", "--format", "json"];
+    let docs = run(&args);
+    assert!(docs.status.success(), "documentation alone must not fail the high gate: {}", stdout(&docs));
+    for rule in ["unsafe_fn_without_safety_doc", "unsafe_without_safety_comment"] {
+        assert!(has_finding(&stdout(&docs), rule, "lib.rs", 1), "{}", stdout(&docs));
+    }
+    assert!(!stdout(&docs).contains("\"severity\":\"high\""), "{}", stdout(&docs));
+    std::fs::write(dir.join("lib.rs"), "static mut LIVE_STATE: u8 = 0;\npub unsafe fn read(p: *const u8) -> u8 { unsafe { *p } }").unwrap();
+    let hazard = run(&args);
+    std::fs::remove_file(dir.join("lib.rs")).unwrap();
+    std::fs::remove_dir(dir).unwrap();
+    assert_eq!(hazard.status.code(), Some(1), "{}", stdout(&hazard));
+    assert!(has_finding(&stdout(&hazard), "static_mut", "lib.rs", 1));
+}
+
+#[test]
 fn missing_benchmark_uncertainty_is_an_error_not_an_improvement() {
     let dir = std::env::temp_dir().join(format!("rust-guardrails-missing-ci-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -227,7 +248,7 @@ fn clippy_corroborates_syntactic_findings() {
     let j = stdout(&o);
     assert!(j.contains("{\"name\":\"clippy\",\"status\":\"ran\""), "{j}");
     // The syntactic unsafe finding absorbed clippy's lint at the same line.
-    assert!(j.contains("[confirmed by clippy::undocumented_unsafe_blocks]"), "{j}");
+    assert!(j.contains("[documentation convention confirmed by clippy::undocumented_unsafe_blocks; soundness is unverified]"), "{j}");
     assert!(!has_finding(&j, "clippy::undocumented_unsafe_blocks", "src/lib.rs", 43));
     assert!(j.contains("\"rule\":\"clippy::unused_async\""));
     let _ = std::fs::remove_dir_all(fixtures().join("sample").join("target"));
@@ -296,5 +317,5 @@ fn clippy_never_writes_the_lockfile_and_caps_deny_lints() {
     let _ = std::fs::remove_dir_all(&dir);
     assert!(j.contains("{\"name\":\"clippy\",\"status\":\"ran\",\"detail\":\"") && j.contains("build succeeded"), "{j}");
     assert!(!j.contains("\"severity\":\"blocker\""), "{j}");
-    assert!(j.contains("[confirmed by clippy::undocumented_unsafe_blocks]"), "{j}");
+    assert!(j.contains("[documentation convention confirmed by clippy::undocumented_unsafe_blocks; soundness is unverified]"), "{j}");
 }

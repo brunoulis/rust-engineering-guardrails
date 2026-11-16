@@ -20,7 +20,7 @@ SOURCE OPTIONS (report, audit, triage):
   --profile service|engine|library|ffi|prototype   (default service)
   --hot GLOB            mark matching files as known hot paths (repeatable)
   --exclude GLOB        skip matching files (repeatable)
-  --include-tests       also scan tests/, benches/ and #[cfg(test)] module files
+  --include-tests       also scan test files and #[cfg(test)] items/statements
   --include-ignored     include Git-ignored source files and Cargo manifests
   --engine auto|ast|heuristic   (default auto: ast when compiled in)
   --max-file-lines N (1000)  --max-fn-lines N (80)  --max-fields N (15)  --max-methods N (30)

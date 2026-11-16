@@ -86,6 +86,153 @@ fn conditional_production_modules_remain_in_scope() {
 }
 
 #[test]
+fn test_only_statements_expressions_and_match_arms_are_excluded() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+fn live() {
+    #[cfg(test)]
+    probe(unsafe { std::mem::transmute::<u32, f32>(0) });
+    #[cfg(all(test, feature = "probe"))]
+    let _value = None::<u8>.unwrap();
+    #[cfg(test)]
+    panic!("test macro");
+    #[cfg(test)]
+    unsafe { std::mem::transmute::<u32, f32>(0); }
+    match 0 {
+        #[cfg(test)] 1 => { None::<u8>.unwrap(); },
+        _ => {},
+    }
+}
+"#,
+    )]);
+    let default = f.report(false);
+    for rule in ["unsafe_without_safety_comment", "transmute", "unwrap_in_non_test", "panic_in_library"] {
+        assert!(!finding(&default, rule, "lib.rs"), "{rule}: {default}");
+        assert!(finding(&f.report(true), rule, "lib.rs"), "--include-tests must restore {rule}");
+    }
+}
+
+#[test]
+fn cfg_test_items_and_associated_items_are_excluded() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+#[cfg(test)] static mut TEST_ONLY: u8 = 0;
+#[cfg(test)] const TEST_VALUE: u8 = None::<u8>.unwrap();
+#[cfg(test)] enum TestEnum { Value = { None::<u8>.unwrap() } }
+#[cfg(test)] struct TestType { value: std::rc::Rc<std::cell::RefCell<u8>> }
+trait LiveTrait {
+    #[cfg(test)] fn test_default() { None::<u8>.unwrap(); }
+    #[cfg(test)] const TEST_ASSOC: u8 = None::<u8>.unwrap();
+}
+struct Live;
+impl Live {
+    #[cfg(test)] const TEST_ASSOC: u8 = None::<u8>.unwrap();
+}
+"#,
+    )]);
+    let default = f.report(false);
+    for rule in ["static_mut", "unwrap_in_non_test", "rc_refcell"] {
+        assert!(!finding(&default, rule, "lib.rs"), "{rule}: {default}");
+    }
+    let tests = f.report(true);
+    assert!(finding(&tests, "static_mut", "lib.rs"), "{tests}");
+    assert!(finding(&tests, "unwrap_in_non_test", "lib.rs"), "{tests}");
+    assert!(finding(&tests, "rc_refcell", "lib.rs"), "{tests}");
+}
+
+#[test]
+fn production_capable_cfg_statements_and_following_code_remain_visible() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+fn live() {
+    #[cfg(test)] let _ = None::<u8>.unwrap();
+    #[cfg(not(test))] let _ = None::<u8>.unwrap();
+    #[cfg(any(test, feature = "live"))] let _ = None::<u8>.unwrap();
+    #[cfg_attr(feature = "test_mode", cfg(test))] let _ = None::<u8>.unwrap();
+    unsafe { std::mem::transmute::<u32, f32>(0); }
+}
+"#,
+    )]);
+    let default = f.report(false);
+    let findings = default.split("\"findings\":[").nth(1).unwrap();
+    assert_eq!(findings.matches("\"rule\":\"unwrap_in_non_test\"").count(), 3, "{default}");
+    assert!(finding(&default, "transmute", "lib.rs"), "{default}");
+    assert!(finding(&default, "unsafe_without_safety_comment", "lib.rs"), "{default}");
+}
+
+#[test]
+fn test_only_function_and_statement_modules_propagate_file_scope() {
+    let f = Fixture::new(&[
+        (
+            "src/lib.rs",
+            r#"
+#[cfg(test)] fn checks() { #[path = "fn_support.rs"] mod support; }
+fn live() {
+    #[cfg(test)] { #[path = "block_support.rs"] mod support; }
+}
+#[path = "shared.rs"] mod production;
+#[cfg(test)] fn shared_checks() { #[path = "shared.rs"] mod support; }
+"#,
+        ),
+        ("src/fn_support.rs", "fn check() { None::<u8>.unwrap(); }"),
+        ("src/block_support.rs", "fn check() { None::<u8>.unwrap(); }"),
+        ("src/shared.rs", "fn live() { None::<u8>.unwrap(); }"),
+    ]);
+    let default = f.report(false);
+    for file in ["src/fn_support.rs", "src/block_support.rs"] {
+        assert!(!finding(&default, "unwrap_in_non_test", file), "{file}: {default}");
+        assert!(finding(&f.report(true), "unwrap_in_non_test", file), "{file}");
+    }
+    assert!(finding(&default, "unwrap_in_non_test", "src/shared.rs"), "{default}");
+}
+
+#[test]
+fn test_only_variants_and_struct_literal_fields_are_excluded() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+enum LiveEnum { #[cfg(test)] Test = { None::<u8>.unwrap() }, Live = 0 }
+struct Live { value: u8 }
+fn live() { let _ = Live { #[cfg(test)] value: None::<u8>.unwrap() }; }
+"#,
+    )]);
+    assert!(!finding(&f.report(false), "unwrap_in_non_test", "lib.rs"));
+    assert!(finding(&f.report(true), "unwrap_in_non_test", "lib.rs"));
+}
+
+#[test]
+fn test_only_function_and_generic_parameters_are_excluded() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+fn live(#[cfg(test)] value: std::rc::Rc<std::cell::RefCell<u8>>) {}
+struct Generic<#[cfg(test)] T = std::rc::Rc<std::cell::RefCell<u8>>> { value: u8 }
+"#,
+    )]);
+    assert!(!finding(&f.report(false), "rc_refcell", "lib.rs"));
+    let included = f.report(true);
+    let findings = included.split("\"findings\":[").nth(1).unwrap();
+    assert_eq!(findings.matches("\"rule\":\"rc_refcell\"").count(), 2, "{included}");
+}
+
+#[test]
+fn commas_in_cfg_string_values_do_not_hide_production_code() {
+    let f = Fixture::new(&[(
+        "lib.rs",
+        r#"
+#[cfg(all(build_flavor = "live,test,native"))] static mut LIVE: u8 = 0;
+#[cfg(all(build_flavor = "live, test ,native"))] fn live() { None::<u8>.unwrap(); }
+"#,
+    )]);
+    let report = f.report(false);
+    assert!(finding(&report, "static_mut", "lib.rs"), "{report}");
+    assert!(finding(&report, "unwrap_in_non_test", "lib.rs"), "{report}");
+}
+
+#[test]
 fn ordinary_module_children_and_path_attributes_inside_non_root_files() {
     let f = Fixture::new(&[
         ("src/lib.rs", "mod feature;"),

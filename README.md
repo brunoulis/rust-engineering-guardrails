@@ -1,10 +1,10 @@
-# Rust Engineering Guardrails 1.3.0
+# Rust Engineering Guardrails 1.3.1
 
 *Correctness by construction. Guardrails prevent engineering mistakes; they do not impose architecture.*
 
 Rust engineering guidance plus **`rust-guardrails`**, a read-only Rust auditor. One command produces a report covering **architecture, ownership, concurrency, safety, quality and potential performance**, with a **prioritized, verifiable refactoring plan**. The tool proposes changes; it never edits the audited code. Works as a Claude Code, Codex or Hermes skill.
 
-Skill 1.3.0 and auditor 1.2.0 improve [audit precision](policies/source-scope.md): Git-aware source selection, nested Cargo discovery from the same inventory, path-directed test modules and explicit unverified unsafe-comment review. Maintained untracked files stay in scope; `--include-ignored` broadens selection intentionally. Filesystem fallback is reported when Git selection is unavailable. No additional Cargo dependencies are required.
+Skill 1.3.1 and auditor 1.2.1 retain [audit precision](policies/source-scope.md) and classify missing unsafe documentation as medium review, rather than an automatic high defect. Test-only statements and items inside production files are excluded by default and restored with `--include-tests`. Git-aware source selection, nested Cargo discovery and explicit unverified comment evidence remain available. No additional Cargo dependencies are required.
 
 The shared philosophy, [task modes](modes/audit.md), [domain profiles](profiles/README.md), [FFI review](references/ffi.md), [security policy](policies/security-supply-chain.md), [risk-based verification](references/verification-intelligence.md), baselines, SARIF, configuration and benchmark comparison remain. Native-window guidance remains in [native-layout](references/native-layout.md).
 
@@ -76,11 +76,16 @@ rust-guardrails topology .               # raw cargo metadata --no-deps
 ## Severity policy (from SKILL.md §3)
 
 - Pattern matches never become **blocker**. Only compiler errors and benchmark regressions beyond an explicit `--max-regression` budget do.
+- Missing unsafe explanations and `# Safety` sections are **medium documentation review**. Matching Clippy warnings confirm the documentation convention, not unsoundness. Compiler errors remain blockers and failed requested analyzers still fail configured gates.
 - Per-iteration clone/allocation candidates stay at **info** unless the file is a declared hot path (`--hot`). No blanket ban on `clone`, `collect` or `Vec` in cold code.
 - Profiles shift emphasis: spawn-in-loop and unbounded-channel signals stay medium in `service` until admission/backlog bounds are reviewed; `library` raises `unwrap`/`panic`/`process::exit`; `ffi` raises `unsafe impl`/`transmute`; `prototype` lowers quality debt.
 - Thresholds (`--max-file-lines` 1000, `--max-fn-lines` 80, `--max-fields` 15, `--max-methods` 30) are project choices. A wide type with few methods is reported as a data record (info), not a God object.
 
-## Validation performed for 1.3.0 / auditor 1.2.0
+## Validation performed for 1.3.1 / auditor 1.2.1
+
+The [documentation/cfg regression](docs/evaluations/2026-11-16-projecttelemetrygui-documentation-cfg.md) repeats the installed/new comparison on 534 unchanged application hashes. The same 369 files yield 282 documentation signals reclassified from high to medium and one test-only statement excluded: 1,359 → 1,358 total signals. `--include-tests` restores that statement. Zero syntactic high signals does not repair the actual defects found by manual review. Local verification: 146 default/opt-in tests, 94 core tests (4 ignored), strict Clippy for both variants and formatting pass.
+
+## Historical validation for 1.3.0 / auditor 1.2.0
 
 The [real-project regression](docs/evaluations/2026-11-16-projecttelemetrygui-precision.md) compares old/new binaries on 534 unchanged application source/manifest/lock hashes. Automatic report noise falls from 4,491 to 1,359 signals, chiefly by excluding ignored copies. Equal maintained scope removes nine test-only findings (1,342 → 1,333 syntactic signals), retains four comment findings as unverified review evidence and discovers ten Cargo projects. Nine dependency graphs resolve frozen; one is explicitly workspace-only offline. Additional metadata contributes 26 separate signals.
 

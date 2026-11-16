@@ -2,7 +2,7 @@
 name: rust-engineering-guardrails
 description: Design, audit and incrementally refactor Rust with evidence-based architecture, type safety and measured performance.
 metadata:
-  version: 1.3.0
+  version: 1.3.1
   hermes:
     tags: [rust, architecture, refactoring, performance, code-review]
 ---
@@ -109,6 +109,8 @@ The report states each finding's confidence (`heuristic` < `syntactic` < `compil
 **E. Review**: request independent reviewer in a fresh context when available; otherwise do a deliberate skeptical pass. The reviewer must examine architectural debt, concurrency assumptions, false speed claims, tests, and compatibility, not just `cargo clippy`. Re-read this skill at handoff/review in long agent sessions.
 
 ## 3. Severity and decision policy
+
+Missing unsafe explanations and `# Safety` sections are **medium documentation review**, including corroborating Clippy warnings. Establish defect severity from the actual operation and callers; a missing comment does not establish unsoundness. Compiler errors and failed requested analyzers retain their gates; corroboration preserves independent blocker diagnostics.
 
 - **BLOCKER**: failing correctness tests, unsafe soundness risk, violated deterministic/ABI contract, known deadlock, lost state, or proven unacceptable regression.
 - **HIGH**: unbounded resource growth, verified harmful hot-path allocations, panic-sensitive temporary invalid state, concurrency oversubscription, unreviewed FFI.

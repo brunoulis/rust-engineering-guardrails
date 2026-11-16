@@ -75,16 +75,21 @@ pub fn corroborate(findings: &mut Vec<Finding>) -> usize {
     let mut merged = 0;
     for i in 0..findings.len() {
         let Some(&(_, lint)) = CORROBORATIONS.iter().find(|(r, _)| *r == findings[i].rule) else { continue };
-        let hit = (0..findings.len()).find(|&j| !drop[j] && findings[j].rule == lint && findings[j].file == findings[i].file && findings[j].line == findings[i].line);
+        // Preserve an existing blocker diagnostic instead of folding it into a
+        // lower-severity review signal. Analyzer failure gates are independent.
+        let hit = (0..findings.len()).find(|&j| {
+            !drop[j] && findings[j].severity != Severity::Blocker && findings[j].rule == lint && findings[j].file == findings[i].file && findings[j].line == findings[i].line
+        });
         if let Some(j) = hit {
             drop[j] = true;
             merged += 1;
             let (sev, conf) = (findings[j].severity, findings[j].confidence);
             let f = &mut findings[i];
             // A merge confirms the lead; it never turns a pattern match into a blocker.
-            f.severity = f.severity.max(sev).min(Severity::High);
+            let documentation = matches!(f.rule.as_str(), "unsafe_without_safety_comment" | "unsafe_fn_without_safety_doc" | "unsafe_safety_comment_review");
+            f.severity = if documentation { Severity::Medium } else { f.severity.max(sev).min(Severity::High) };
             f.confidence = f.confidence.max(conf);
-            f.message = if f.rule == "unsafe_safety_comment_review" {
+            f.message = if documentation {
                 format!("{} [documentation convention confirmed by {lint}; soundness is unverified]", f.message)
             } else {
                 format!("{} [confirmed by {lint}]", f.message)
@@ -597,7 +602,7 @@ mod tests {
             f("clone_call", "hot.rs", 2, true),       // info but hot ownership → included
             f("allocation_in_loop", "a.rs", 3, true), // info, but hot → in plan
             f("allocation_in_loop", "a.rs", 9, true),
-            f("unsafe_without_safety_comment", "ffi.rs", 4, false), // high
+            f("unsafe_without_safety_comment", "ffi.rs", 4, false), // documentation review, medium
             f("workspace_summary", "", 0, false),                   // context only
             Finding::new("E0425", Category::Quality, Severity::Blocker, Confidence::Compiler).at("main.rs", 1).msg("cannot find value"),
         ];
@@ -605,7 +610,8 @@ mod tests {
         assert_eq!(omitted, 0);
         let ids: Vec<_> = plan.iter().map(|p| (p.id.as_str(), p.priority, p.rule.as_str(), p.file.as_str())).collect();
         assert_eq!(ids[0], ("R1", "P0", "E0425", "main.rs"));
-        assert_eq!(ids[1].2, "unsafe_without_safety_comment");
+        assert_eq!(ids[1].2, "allocation_in_loop");
+        assert_eq!(plan.iter().find(|p| p.rule == "unsafe_without_safety_comment").unwrap().severity, Severity::Medium);
         assert!(ids.iter().any(|i| i.2 == "clone_call" && i.3 == "hot.rs"));
         assert!(!ids.iter().any(|i| i.2 == "clone_call" && i.3 == "a.rs"));
         assert!(!ids.iter().any(|i| i.2 == "workspace_summary"));
@@ -624,8 +630,9 @@ mod tests {
         ];
         assert_eq!(corroborate(&mut v), 1);
         assert_eq!(v.len(), 2);
-        assert_eq!((v[0].severity, v[0].confidence), (Severity::High, Confidence::Compiler));
-        assert!(v[0].message.contains("confirmed by clippy::undocumented_unsafe_blocks"));
+        assert_eq!((v[0].severity, v[0].confidence), (Severity::Medium, Confidence::Compiler));
+        assert!(v[0].message.contains("documentation convention confirmed by clippy::undocumented_unsafe_blocks"));
+        assert!(v[0].message.contains("soundness is unverified"));
         assert_eq!(v[1].line, 9);
     }
 
@@ -655,8 +662,25 @@ mod tests {
             f("unsafe_without_safety_comment", "a.rs", 4, false),
             Finding::new("clippy::undocumented_unsafe_blocks", Category::Safety, Severity::Blocker, Confidence::Compiler).at("a.rs", 4),
         ];
-        corroborate(&mut m);
-        assert_eq!(m[0].severity, Severity::High);
+        assert_eq!(corroborate(&mut m), 0, "compiler errors must remain independent blockers");
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0].severity, Severity::Medium);
+        assert_eq!(m[1].severity, Severity::Blocker);
+    }
+
+    #[test]
+    fn documentation_corroboration_does_not_promote_warnings_to_high() {
+        for (rule, lint) in [
+            ("unsafe_without_safety_comment", "clippy::undocumented_unsafe_blocks"),
+            ("unsafe_fn_without_safety_doc", "clippy::missing_safety_doc"),
+            ("unsafe_safety_comment_review", "clippy::undocumented_unsafe_blocks"),
+        ] {
+            let mut findings = vec![f(rule, "ffi.rs", 3, false), Finding::new(lint, Category::Safety, Severity::High, Confidence::Compiler).at("ffi.rs", 3)];
+            assert_eq!(corroborate(&mut findings), 1);
+            assert_eq!(findings[0].severity, Severity::Medium, "{rule}");
+            assert_eq!(findings[0].confidence, Confidence::Compiler);
+            assert!(findings[0].message.contains("soundness is unverified"));
+        }
     }
 
     #[test]

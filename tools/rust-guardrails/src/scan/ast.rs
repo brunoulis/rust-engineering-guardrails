@@ -93,6 +93,64 @@ struct Modules {
     out: Vec<ModuleRef>,
 }
 
+// syn's non-exhaustive enums have no shared attrs accessor. Unknown future syntax
+// remains in scope rather than silently hiding a possible production subtree.
+macro_rules! node_attrs {
+    ($node:expr, $kind:ident, $($variant:ident),+ $(,)?) => {
+        match $node {
+            $(syn::$kind::$variant(node) => node.attrs.as_slice(),)+
+            _ => &[],
+        }
+    };
+}
+
+// Use the same attribute boundaries for finding traversal and module discovery.
+// The former skips a test subtree; the latter visits it with inherited test
+// context so out-of-line children are still classified correctly.
+macro_rules! cfg_visitors {
+    () => {
+        fn visit_item(&mut self, node: &'ast syn::Item) {
+            let attrs = node_attrs!(node, Item, Const, Enum, ExternCrate, Fn, ForeignMod, Impl, Macro, Mod, Static, Struct, Trait, TraitAlias, Type, Union, Use);
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_item(v, node));
+        }
+        fn visit_impl_item(&mut self, node: &'ast syn::ImplItem) {
+            let attrs = node_attrs!(node, ImplItem, Const, Fn, Type, Macro);
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_impl_item(v, node));
+        }
+        fn visit_trait_item(&mut self, node: &'ast syn::TraitItem) {
+            let attrs = node_attrs!(node, TraitItem, Const, Fn, Type, Macro);
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_trait_item(v, node));
+        }
+        fn visit_foreign_item(&mut self, node: &'ast syn::ForeignItem) {
+            let attrs = node_attrs!(node, ForeignItem, Fn, Static, Type, Macro);
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_foreign_item(v, node));
+        }
+        fn visit_expr(&mut self, node: &'ast Expr) {
+            let attrs = node_attrs!(node, Expr, Array, Assign, Async, Await, Binary, Block, Break, Call, Cast, Closure, Const, Continue, Field, ForLoop, Group, If, Index, Infer, Let, Lit, Loop, Macro, Match, MethodCall, Paren, Path, Range, RawAddr, Reference, Repeat, Return, Struct, Try, TryBlock, Tuple, Unary, Unsafe, While, Yield);
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_expr(v, node));
+        }
+        fn visit_fn_arg(&mut self, node: &'ast syn::FnArg) {
+            let attrs = match node { syn::FnArg::Receiver(n) => &n.attrs, syn::FnArg::Typed(n) => &n.attrs };
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_fn_arg(v, node));
+        }
+        fn visit_generic_param(&mut self, node: &'ast syn::GenericParam) {
+            let attrs = match node { syn::GenericParam::Lifetime(n) => &n.attrs, syn::GenericParam::Type(n) => &n.attrs, syn::GenericParam::Const(n) => &n.attrs };
+            self.with_cfg(is_test_attr(attrs), |v| visit::visit_generic_param(v, node));
+        }
+        cfg_visitors!(@plain visit_local, Local);
+        cfg_visitors!(@plain visit_stmt_macro, StmtMacro);
+        cfg_visitors!(@plain visit_arm, Arm);
+        cfg_visitors!(@plain visit_field_value, FieldValue);
+        cfg_visitors!(@plain visit_field, Field);
+        cfg_visitors!(@plain visit_variant, Variant);
+    };
+    (@plain $method:ident, $kind:ident) => {
+        fn $method(&mut self, node: &'ast syn::$kind) {
+            self.with_cfg(is_test_attr(&node.attrs), |v| visit::$method(v, node));
+        }
+    };
+}
+
 fn module_path(attrs: &[Attribute]) -> Option<String> {
     attrs.iter().find_map(|a| {
         if !a.path().is_ident("path") {
@@ -127,6 +185,12 @@ fn relative_path(path: PathBuf) -> Option<String> {
 }
 
 impl Modules {
+    fn with_cfg(&mut self, test_only: bool, visit: impl FnOnce(&mut Self)) {
+        let saved = self.test_only;
+        self.test_only |= test_only;
+        visit(self);
+        self.test_only = saved;
+    }
     fn new(rel: &str, test_only: bool, in_path_file: bool) -> Self {
         let path = Path::new(rel);
         let path_dir = path.parent().unwrap_or(Path::new("")).to_path_buf();
@@ -137,6 +201,8 @@ impl Modules {
 }
 
 impl<'ast> Visit<'ast> for Modules {
+    cfg_visitors!();
+
     fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
         let test_only = self.test_only || is_test_attr(&m.attrs);
         let path = module_path(&m.attrs);
@@ -263,36 +329,21 @@ fn line_of(span: Span) -> usize {
     span.start().line
 }
 
-/// Splits `a, b(c, d), e` at top-level commas.
-fn top_level_args(s: &str) -> Vec<&str> {
-    let (mut depth, mut start, mut out) = (0i32, 0usize, Vec::new());
-    for (i, ch) in s.char_indices() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            ',' if depth == 0 => {
-                out.push(s[start..i].trim());
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out.push(s[start..].trim());
-    out.retain(|a| !a.is_empty());
-    out
-}
-
 /// True when a `cfg(...)` predicate can only hold in test builds: `test`, or `all(..)`
 /// with `test` (or a test-only predicate) as a direct argument. `any(test, x)` and
 /// `not(test)` are not test-only.
+#[cfg(test)]
 pub fn cfg_is_test_only(pred: &str) -> bool {
-    let p: String = pred.chars().filter(|c| !c.is_whitespace()).collect();
-    if p == "test" {
-        return true;
-    }
-    match p.strip_prefix("all(").and_then(|r| r.strip_suffix(')')) {
-        Some(inner) => top_level_args(inner).into_iter().any(cfg_is_test_only),
-        None => false,
+    syn::parse_str::<syn::Meta>(pred).is_ok_and(|meta| cfg_meta_is_test_only(&meta))
+}
+
+fn cfg_meta_is_test_only(meta: &syn::Meta) -> bool {
+    match meta {
+        syn::Meta::Path(path) => path.is_ident("test"),
+        syn::Meta::List(list) if list.path.is_ident("all") => {
+            list.parse_args_with(Punctuated::<syn::Meta, Token![,]>::parse_terminated).is_ok_and(|args| args.iter().any(cfg_meta_is_test_only))
+        }
+        _ => false,
     }
 }
 
@@ -304,7 +355,7 @@ fn is_test_attr(attrs: &[Attribute]) -> bool {
         }
         if p.is_ident("cfg") {
             if let syn::Meta::List(l) = &a.meta {
-                return cfg_is_test_only(&l.tokens.to_string());
+                return l.parse_args::<syn::Meta>().is_ok_and(|meta| cfg_meta_is_test_only(&meta));
             }
         }
         false
@@ -345,6 +396,11 @@ fn generic_head(ty: &Type) -> Option<(String, Option<&Type>)> {
 }
 
 impl Visitor<'_> {
+    fn with_cfg(&mut self, test_only: bool, visit: impl FnOnce(&mut Self)) {
+        if self.include_tests || !test_only {
+            visit(self);
+        }
+    }
     fn push(&mut self, rule: &'static str, line: usize, detail: Option<String>) {
         // One finding per rule and line: `(a.clone(), b.clone())` is one review item.
         if self.out.findings.iter().rev().take(16).any(|f| f.rule == rule && f.line == line) {
@@ -486,6 +542,8 @@ const EXPR_MACROS: &[&str] = &[
 ];
 
 impl<'ast> Visit<'ast> for Visitor<'_> {
+    cfg_visitors!();
+
     fn visit_item_mod(&mut self, m: &'ast syn::ItemMod) {
         if self.include_tests || !is_test_attr(&m.attrs) {
             visit::visit_item_mod(self, m);
@@ -546,7 +604,8 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
             }
         }
         if let Some((name, _)) = generic_head(&i.self_ty) {
-            let methods = if i.trait_.is_none() { i.items.iter().filter(|it| matches!(it, syn::ImplItem::Fn(_))).count() } else { 0 };
+            let methods =
+                if i.trait_.is_none() { i.items.iter().filter(|it| matches!(it, syn::ImplItem::Fn(f) if self.include_tests || !is_test_attr(&f.attrs))).count() } else { 0 };
             let line = line_of(i.impl_token.span);
             let t = self.type_stat(name);
             if t.line == 0 {
@@ -559,11 +618,11 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 
     fn visit_item_struct(&mut self, s: &'ast syn::ItemStruct) {
-        if is_test_attr(&s.attrs) {
+        if !self.include_tests && is_test_attr(&s.attrs) {
             return;
         }
         let line = line_of(s.struct_token.span);
-        let fields = s.fields.len();
+        let fields = s.fields.iter().filter(|f| self.include_tests || !is_test_attr(&f.attrs)).count();
         let t = self.type_stat(s.ident.to_string());
         t.fields = fields;
         t.line = line;
