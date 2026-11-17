@@ -7,131 +7,16 @@ metadata:
     tags: [rust, architecture, refactoring, performance, code-review]
 ---
 
-# Rust Engineering Guardrails
+# Rust engineering guardrails
 
-*Correctness by construction.*
+For a local implementation, inspect the affected API, callers and tests. Use the project's resolved toolchain, features and error conventions. Preserve ordering, ownership and failure behavior. When an operation can partially update state, establish what the caller observes on error and test it. Keep a clone or allocation when it serves a concrete ownership or correctness requirement.
 
-## Philosophy
+Use the affected crate's tests and applicable format or Clippy checks. Select features and targets that exercise the changed code. Ground performance claims in comparable measurements.
 
-**Guardrails prevent engineering mistakes; they do not impose architecture.**
+Open additional guidance when the task calls for it.
 
-**Correctness over compliance. Evidence over assumptions. Simplicity over ceremony.**
+- For FFI or unsafe code, consult [FFI contracts](references/ffi.md) and establish lifetime, layout, unwind and ownership invariants at the boundary.
+- For cancellation or queued work, consult [async reliability](references/async-reliability.md). For crate boundaries, consult [crate decisions](references/crate-boundaries.md).
+- For audit, refactor, migration, dependency changes, performance work or a cross-crate change, use the applicable mode and references in the [engineering guide](engineering-guide.md). Audits are read-only unless the user requests edits.
 
-Safe Rust's guarantees depend on sound unsafe boundaries and libraries. Successful compilation does not establish correct behavior, architectural fit, predictable performance or maintainability.
-
-1. **Correctness before compliance.** Compiler checks, Clippy and audits are useful gates, not proof of engineering quality.
-2. **Architecture must be earned.** Modules, crates, traits, generics, typestate and arenas require benefits that justify their cost in this project.
-3. **Ownership is a design tool.** Reconsider ownership when the borrow checker exposes friction; clones, locks and interior mutability need a purpose beyond silencing errors.
-4. **Performance requires evidence.** Measure representative workloads. Fewer allocations, less code and zero-copy patterns do not automatically improve performance.
-5. **Refactor for a reason.** Preserve observable behavior, identify concrete debt, compare alternatives and make the smallest coherent, verifiable change.
-6. **Safety is non-negotiable; style is contextual.** Establish unsafe invariants and verification. Respect project context for names, module layout, crate count and implementation patterns.
-7. **Agents must prove their work.** Report what was inspected, tested, measured, skipped and unresolved. Keep unverified assumptions visible.
-
-The goal is the simplest Rust that is correct, safe, maintainable and demonstrably fit for its purpose.
-
-Use for Rust implementation, review, quality-driven refactoring, code ports, async services, simulations, FFI boundaries, and performance work. The objective is **correctness + architectural fit + measurable efficiency + maintainability**, not merely making `cargo check` pass.
-
-## 0. Activation and mode
-
-1. Select the task mode: [audit](modes/audit.md) (inspect and report), [implement](modes/implement.md) (requested behavior), [refactor](modes/refactor.md) (scoped behavior-preserving improvement), or [deep-refactor](modes/deep-refactor.md) (justified architectural migration). Read the selected mode; modes describe authorized work, not CLI subcommands.
-2. Select the domain [profile](profiles/README.md): **service**, **engine**, **library**, **ffi** or **prototype**. Profiles set emphasis independently of task mode. Inspect `Cargo.toml`, crate boundaries, dependencies/features, toolchain, tests, project rules and `.rust-rails.toml` when present; use [project profile policy](policies/project-profile.md). Don't assume a three-crate workspace, ECS, zero allocation, or `no_std` is appropriate.
-   Establish the actual [source scope](policies/source-scope.md) before interpreting counts: the auditor uses Git selection when available, includes maintained untracked sources, and reports filesystem fallback. Without a root manifest it discovers nested Cargo projects from the same source inventory; keep independent crates independent. Use `--include-ignored` only when that broader scope is intended.
-3. Read the *one* reference needed for the current task; load more only when evidence warrants it:
-   - `references/refactoring.md`: **intelligent quality triage and scoped incremental refactoring** (read when improving existing code).
-   - `references/architecture.md`: ownership, borrow checker, data model, arenas/newtypes/traits.
-   - `references/crate-boundaries.md`: **adaptive crate decision**; compare one crate/modules, lib+bin, workspace, and independently versioned crates with actual evidence.
-   - `references/type-safety.md`: newtypes, typestate, validated values, generational keys, deterministic arithmetic and error contracts.
-   - `references/performance.md`: hot loops, allocations, profiling, benchmarks, compilation.
-   - `references/concurrency.md`: channels, Arc/Mutex, Tokio, backpressure, Sans-IO.
-   - `references/async-reliability.md`: cancellation safety, bounded queues/workers, overload, graceful shutdown.
-   - `references/parity.md`: determinism, migrations, differential and property tests.
-   - `references/verification.md`: Clippy, tests, CI, lint strategy, release gates.
-   - `references/verification-intelligence.md`: choose Miri, Loom, properties, mutation testing or sanitizers from actual risk and prerequisites.
-   - `policies/security-supply-chain.md`: dependency advisories, audit/deny/vet, secrets, untrusted inputs and resource limits.
-   - `references/ffi.md`: cross-language ownership, ABI/layout, unwind, callbacks and allocator contracts.
-   - `policies/continuous-refactoring.md`: new debt, changed contracts, baselines and dated exceptions.
-   - `policies/evidence-assessment.md`: optional multidimensional assessment; unknown remains unknown.
-   - `references/native-layout.md`: native windows, overlays and Rust-rendered UI; read when options, fonts or small bounds can cause overlap, clipping or automatic resizing.
-   - `references/anti-patterns.md`: short bad/good code examples and exceptions.
-   - `references/agent-workflow.md`: planning, independent reviews, reporting.
-   - `references/sources.md`: origin of ideas and primary technical documentation.
-   - `references/source-cases.md`: pinned Mini-Redis and ripgrep mechanisms, conditions for retaining them, and linked behavior tests; read before replacing working locks, clones, admission limits or scoped borrows.
-4. For nontrivial tasks, establish a *before* baseline or state explicitly why no baseline is possible. Identify invariants and user-visible behavior before editing.
-
-## 1. Non-negotiable engineering behavior
-
-- **Borrow checker as design feedback.** Before adding `.clone()`, `.collect()`, `Rc<RefCell<_>>`, `Arc<Mutex<_>>` or `mem::take` *solely to compile*, examine smaller borrows, split state, helper functions receiving only needed fields, ownership transfer, IDs/arenas, and message passing. A clone may still be correct—explain its size, frequency, and purpose.
-- **No unexamined hot-path allocation.** Identify hot paths via application knowledge and profiling; inspect allocation candidates there. No blanket ban on `Vec`, `collect`, clone, or hashmap in non-hot code. Preferring reusable scratch space is conditional on evidence and complexity.
-- **Avoid accidental hidden state.** An extracted field via `mem::take` is replaced with `Default` during downstream calls; check nested access, reentrancy, early return, and panic/unwind invariants. `mem::take` is not inherently bad.
-- **Avoid God objects and mechanical OOP ports.** Select decomposition by responsibility, not by arbitrary file-length targets. Use `newtype` identifiers, explicit state transitions, appropriate `traits`, and well-scoped modules where they pay for themselves.
-- **Refactoring must address concrete quality debt.** Do not equate fewer lines, new abstractions, additional crates or disappearance of `clone` with improvement. For a refactor, preserve the observed contract, characterize untested behavior first, prioritize by demonstrated risk/benefit, and stage small reversible changes. Follow `references/refactoring.md` and `templates/refactor-plan.md`; no repo-wide rewriting by default.
-- **Crate boundaries must be earned.** Do not split on LOC thresholds, force a fixed number of crates, or assume a workspace is faster. Before any crate extraction, use `references/crate-boundaries.md` to compare **single crate/modules → lib+bin → workspace → independent crates**. Record an ADR and the evidence: cohesion, coupling, public API, dependency DAG, ownership, test isolation, feature resolution, measured build cost and migration risk. If the benefit is not established, keep modules or defer.
-- **Make invalid states hard, not APIs unusable.** Consider validated newtypes, typestate, runtime enums and generational keys where the domain benefits; verify runtime deserialization and long-lived ID behavior. Check arithmetic overflow, rounding, ordering and serialization parity before changes. See `references/type-safety.md`.
-- **Concurrency is budgeted.** No unbounded thread/task creation, buffers, queues, or accidental blocking within async runtimes. Investigate data ownership and channels before shared mutable state where sensible. `Arc` itself is a legitimate tool, not an error. Analyze cancellation-safety, overload policy, bounded capacity and shutdown behavior; see `references/async-reliability.md`.
-- **Safety matters.** Do not introduce `unsafe` to bypass compiler errors. If FFI or a demonstrated need requires unsafe, document invariants, isolate it behind a safe API, and review separately. Never weaken tests or lints to force a pass.
-- **Correctness is a gate.** Preserve specified results, observable ordering, error behavior, and compatibility. For deterministic systems, test replay parity; for FFI, test ABI and lifetime contracts.
-- **Content fit is a rendering contract.** For native UI, derive layout and effective window requirements from the same content geometry. Preserve requested bounds, font policy and deliberate canvas semantics. Verify the actual renderer/variant; a compile or a screenshot of another variant does not prove visual correctness. See `references/native-layout.md`.
-- **Performance claims require evidence.** Record before/after, workload, release profile, machine/environment, repeated runs, variance, and caveats. Do not claim an improvement based on fewer `.clone()` tokens or prettier code.
-
-### Version-aware crate and toolchain work
-
-Before using a crate API, cleaning/refactoring its callers, or updating a dependency, verify the exact version/source resolved for the affected workspace member, target and feature selection. Compare `Cargo.lock` with available dependency metadata (for example `cargo metadata --frozen`), installed source, git revisions, path dependencies and `[patch]` overrides. A `Cargo.toml` range or lockfile entry alone does not establish which duplicate version or features the target uses. Check the active toolchain, `rust-toolchain.toml` when present, edition and MSRV requirements. If resolution/source is unavailable or inconsistent, mark it **UNVERIFIED**; do not run `cargo update` or install a toolchain merely to inspect.
-
-Consult official crate documentation for the resolved version **before changing crate-dependent code**, including feature/target gates, behavior and deprecations. Use the matching version on docs.rs or the project's versioned docs; for standard-library APIs, check documentation and stabilization against the project's actual Rust toolchain. If versioned docs are unavailable, use matching release/tag documentation, changelogs, source and tests. Latest docs and pinned skill examples are not evidence that an API exists under the project's version/features.
-
-For an update, establish **current and intended target versions**, consult their documentation and intervening migration/release notes, and assess MSRV, edition/toolchain requirements, default/optional features, transitive dependencies, target/`no_std` support and native/FFI compatibility as applicable. Update only when requested or justified within the authorized task. Cleanup does not authorize a crate/toolchain upgrade; a newer release alone is not a reason to change either.
-
-Inspect manifest/lockfile changes, keep unrelated dependencies unchanged, and run affected check/test/Clippy and consumer checks for the relevant feature/target/MSRV combinations. Preserve API, serialization and error contracts or identify intentional migration changes and rollback. Report versions/revisions, documentation URLs or local paths, update rationale and actual checks. Reuse verified evidence while dependency resolution, features, target and task assumptions remain unchanged.
-
-## 2. Workflow (required when changing Rust)
-
-**Inspect → Design → Implement → Verify → Review**. Scale the depth to risk; audit stops at findings and recommendations. When refactoring, use the six-phase quality process and autonomous scope limits in `references/refactoring.md`.
-
-**A. Investigate**: inspect existing code and test coverage; locate allocations/locks/ownership conflicts; identify which code is truly hot. Apply **Version-aware crate and toolchain work** before crate usage, cleanup or upgrades. Optionally run the read-only auditor; one `report` covers architecture, ownership, concurrency, safety, quality and potential performance, plus a prioritized refactoring plan with verification steps:
-
-```bash
-cargo run --quiet --release --manifest-path path/to/rust-engineering-guardrails/tools/rust-guardrails/Cargo.toml -- report . --profile service --format markdown
-cargo run --quiet --release --manifest-path path/to/rust-engineering-guardrails/tools/rust-guardrails/Cargo.toml -- report . --profile engine --hot 'crates/sim/**' --with clippy --format json
-```
-
-Layers are opt-in by cost. The default runs the `syn` AST scan and `cargo metadata --frozen`, both read-only. `--with clippy` adds type-aware lints and `--with llvm-lines` adds monomorphization hotspots; **both build the project, so use them on trusted code only.** `--criterion DIR --baseline A --candidate B` (or `--hyperfine A.json B.json`) validates an optimization: it reports *improved/regressed* only when confidence intervals separate beyond the noise threshold. `bench-compare` runs that comparison alone. `explain RULE` prints a rule's playbook. `audit`/`triage` keep the legacy (pre-1.0) output.
-
-For continuous debt, `report . --write-baseline rust-baseline.json` records the complete finding set; `report . --baseline rust-baseline.json --fail-on high --format sarif` gates new or escalated findings. With Criterion, `--baseline` retains its benchmark-name meaning; use `--debt-baseline FILE` to compare debt too. Review a baseline before accepting it; never regenerate it automatically to pass CI. See [continuous refactoring](policies/continuous-refactoring.md) for fingerprint limits and exception review. `--audit-json FILE` imports saved cargo-audit evidence; it does not execute a security scan or establish current lockfile identity. Verification recommendations in reports are **not_run**, never results.
-
-The report states each finding's confidence (`heuristic` < `syntactic` < `compiler`/`measured`) and which analyzers were skipped. The AST engine has **no type information**: a finding is an investigation lead, never proof of an allocation, vulnerability or bad architecture. Adjacent unsafe comment evidence stays **unverified**: unlabeled prose or a marker without an argument receives a review signal; a literal `SAFETY:` label never proves soundness. Before acting on a plan item, read the code at its location and pick an option (keep / minimal / structural). Record one disposition with evidence: fixed and verified, legitimate use retained, or investigation deferred with the unresolved question. Valid code need not change or acquire repeated comments to silence a signal. The tool never edits code.
-
-**B. Design**: for substantive changes, compare at least two options, including a minimal correction. For existing debt, compare keep-as-is / minimal fix / structural alternative using evidence; do not perform an opportunistic repo-wide rewrite. State trade-offs in readability, ownership, allocations, latency, compile time, API and invariants. Don't cargo-cult the Reddit case study. **If proposing additional crates**, analyze all four layout options via `references/crate-boundaries.md`, record `templates/crate-decision.md`, and default to the least complex design that meets observed needs. Never silently add crates during an unrelated refactor.
-
-**C. Implement**: make the smallest coherent architectural change; for risky legacy paths, write characterization tests first and keep mechanical moves separate from behavior-changing optimizations; avoid repeated token-level borrow-checker appeasement. Keep public APIs stable unless deliberately changed. Make behavior easy to test without I/O where appropriate (Sans-IO). For justified crate splits, first establish internal module boundaries and separate pure code movement from behavioral changes. Record the [change surface and revision evolution](references/agent-workflow.md#standard-deliverable): each file's purpose, contract/consumer, new state owner and closure, and why additions since the first solution remain necessary. Evaluate `Arc`, locks, caches and tasks by their effects; no token-count or LOC gate.
-
-**D. Verify**: select techniques using [verification intelligence](references/verification-intelligence.md), then run applicable checks from `references/verification.md`. A recommendation is not execution; missing tools, unsupported targets and skipped cases remain unverified. Attribute each result using the [verification matrix](references/verification.md#verification-matrix): package, test kind, valid features/cfg, target/runtime, profile and artifact, command/job, actual counts and candidate freshness. Exit zero with zero/all-skipped tests or stale evidence leaves behavior **UNVERIFIED**; preserve runner failures as **FAIL**. A refactor must verify observable behavior, API/error/serialization contracts and relevant feature/target combinations, including supported feature-off paths. For perf-sensitive changes, measure release-mode representative workloads. If unavailable, mark results **UNMEASURED**. On migration, require golden outputs / differential comparisons from `references/parity.md`. For crate moves, validate relevant feature/target combinations, dependency directions, exposed API and comparable cold/incremental build timings **only if performance is claimed**.
-
-**E. Review**: request independent reviewer in a fresh context when available; otherwise do a deliberate skeptical pass. The reviewer must examine architectural debt, concurrency assumptions, false speed claims, tests, and compatibility, not just `cargo clippy`. Re-read this skill at handoff/review in long agent sessions.
-
-## 3. Severity and decision policy
-
-Missing unsafe explanations and `# Safety` sections are **medium documentation review**, including corroborating Clippy warnings. Establish defect severity from the actual operation and callers; a missing comment does not establish unsoundness. Compiler errors and failed requested analyzers retain their gates; corroboration preserves independent blocker diagnostics.
-
-- **BLOCKER**: failing correctness tests, unsafe soundness risk, violated deterministic/ABI contract, known deadlock, lost state, or proven unacceptable regression.
-- **HIGH**: unbounded resource growth, verified harmful hot-path allocations, panic-sensitive temporary invalid state, concurrency oversubscription, unreviewed FFI.
-- **MEDIUM**: plausible but unmeasured hotspot, God-object trend, excessive coupled borrows, unnecessary work with evidence incomplete.
-- **INFO**: style issue, isolated justified clone, optional performance idea.
-
-A refactor with unverified changes to public behavior, serialization, state invariants or critical error handling is a **BLOCKER**, not merely maintainability work. A crate split without demonstrated benefit is **not automatically a blocker**; it is an architecture-review question. A new dependency cycle, broken public API or lost runtime invariant can become a blocker based on evidence.
-
-Never escalate `clone`, `Arc`, `mem::take`, raw line count, or a single `impl` count to BLOCKER solely from a regex match. No universal numeric thresholds: project-specific budgets belong in repo docs/CI.
-
-## 4. Required handoff format
-
-Use the [standard deliverable](references/agent-workflow.md#standard-deliverable) and, for refactors, [decision record](templates/refactor-plan.md). These are documentary fields, not changes to auditor CLI/JSON/SARIF output. For a small local correction, keep the explanation, actual validation and uncertainty compact; state why state/consumer/distribution dimensions are **N/A**. Use **PASS**, **FAIL**, **UNVERIFIED**, or **N/A** with reasons per check; performance without measurement remains **UNMEASURED**.
-
-1. **Intent and scope** (for existing-code refactors: audit/refactor/deep-refactor, quality dimension and inspected evidence); base/candidate/diff identity, file-level change surface, **behavior/invariants** retained or changed, with tests and affected consumers. An unchanged signature does not establish unchanged semantics, encoding or generated bindings.
-2. **Architectural decision** (option chosen, alternative rejected, trade-offs). If crate boundaries are relevant: report **KEEP / LIB-BIN / WORKSPACE / INDEPENDENT / DEFER**, rationale and ADR.
-3. **Hot-path and concurrency audit** (evidence, or `NOT MEASURED`).
-4. **Validation** (actual commands, pass/fail; don't claim unrun checks).
-5. **Measured results** (baseline ↔ after, same representative workload, or `UNMEASURED`).
-6. **Residual risks**, rollback and independent-review findings: introduced / pre-existing / unknown attribution, trigger/consequence, evidence and disposition. A reviewer's severity label or repeated reviews do not establish a defect or close verification gaps; keep unrelated debt separate without dismissing it.
-
-## 5. Additional reading, only when relevant
-
-For a quality-driven refactor read `references/refactoring.md`, use `rust-guardrails report` for read-only inspection, and record `templates/refactor-plan.md` (the report's plan items map onto its findings, options and slices). For a crate/workspace proposal read `references/crate-boundaries.md` and fill `templates/crate-decision.md` before adding packages. The report's metadata section (members, internal edges, cycles, duplicate versions, transitive counts) and the raw `topology` JSON are inputs to that decision; they never decide architecture. For types, state transitions and deterministic values read `references/type-safety.md`; for cancellation and queue budgets read `references/async-reliability.md`. For a concrete bad/good rewrite read `references/anti-patterns.md`. For a borrow checker failure read `references/architecture.md`; for `Arc`, Tokio, channels or thread-pools read `references/concurrency.md`; for porting JS/TS/C++ to Rust read `references/parity.md` before changing order or data representations; for benchmark claims read `references/performance.md` and `references/verification.md`. Example ownership split: `examples/split_state.rs`. Check templates only if the user asks to add repository-wide rules or CI.
+For an implementation, state the observable change, checks actually run and material limitations. For an audit, lead with the finding and its consequence. Answer direct questions at the requested level of detail.
