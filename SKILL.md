@@ -18,6 +18,8 @@ For a local implementation, inspect the affected API, callers and tests. Use the
 
 Use the affected crate's tests and applicable format or Clippy checks. Select features and targets that exercise the changed code. Ground performance claims in comparable measurements.
 
+For a change with a restricted file scope, record the starting state of affected and protected files before editing. Formatting a Rust test or a crate root can also rewrite modules reached through mod declarations. Preview formatter output and apply it only to owned files. After running all tools, compare the final paths and contents to the starting state and reverse any unintended formatter edits while preserving other people's work.
+
 Open additional guidance when the task calls for it.
 
 - For FFI or unsafe code, consult [FFI contracts](references/ffi.md) and establish lifetime, layout, unwind and ownership invariants at the boundary.
