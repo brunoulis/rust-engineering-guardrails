@@ -325,6 +325,48 @@ fn line_text(lines: &[&str], line: usize) -> String {
     lines.get(line.wrapping_sub(1)).map(|l| excerpt(l, 180)).unwrap_or_default()
 }
 
+fn without_parens(mut expr: &Expr) -> &Expr {
+    while let Expr::Paren(paren) = expr {
+        expr = &paren.expr;
+    }
+    expr
+}
+
+fn range_integer(expr: &Expr) -> Option<(i128, &str)> {
+    let (negative, literal) = match without_parens(expr) {
+        Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => (true, without_parens(&unary.expr)),
+        other => (false, other),
+    };
+    let Expr::Lit(syn::ExprLit { lit: syn::Lit::Int(integer), .. }) = literal else { return None };
+    let value = integer.base10_parse::<i128>().ok()?;
+    Some((if negative { -value } else { value }, integer.suffix()))
+}
+
+fn reversed_for_bounds(expr: &Expr) -> Option<(i128, i128)> {
+    let Expr::Range(range) = without_parens(expr) else { return None };
+    let (start, left) = range_integer(range.start.as_deref()?)?;
+    let (end, right) = range_integer(range.end.as_deref()?)?;
+    if start <= end || (!left.is_empty() && !right.is_empty() && left != right) {
+        return None;
+    }
+    // An allowed overflowing literal can wrap and change the ordering. For inferred
+    // integers and pointer-sized types, use the minimum guaranteed width.
+    let fits = |n| match if left.is_empty() { right } else { left } {
+        "" | "i8" => i8::try_from(n).is_ok(),
+        "u8" => u8::try_from(n).is_ok(),
+        "isize" | "i16" => i16::try_from(n).is_ok(),
+        "usize" | "u16" => u16::try_from(n).is_ok(),
+        "i32" => i32::try_from(n).is_ok(),
+        "u32" => u32::try_from(n).is_ok(),
+        "i64" => i64::try_from(n).is_ok(),
+        "u64" => u64::try_from(n).is_ok(),
+        "i128" => true,
+        "u128" => n >= 0,
+        _ => false,
+    };
+    (fits(start) && fits(end)).then_some((start, end))
+}
+
 fn line_of(span: Span) -> usize {
     span.start().line
 }
@@ -637,6 +679,9 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     }
 
     fn visit_expr_for_loop(&mut self, e: &'ast syn::ExprForLoop) {
+        if let Some((start, end)) = reversed_for_bounds(&e.expr) {
+            self.push("reversed_for_range", line_of(e.expr.span()), Some(format!("range starts at {start}, above its end {end}")));
+        }
         // The iterator expression runs once; only the body is per-iteration.
         self.visit_pat(&e.pat);
         self.visit_expr(&e.expr);
@@ -1065,6 +1110,24 @@ fn t2() { None::<u8>.unwrap(); }
         let body = "    let x = 1;\n".repeat(90);
         let src = format!("fn big() {{\n{body}}}\n");
         assert!(rules_of(&src).contains(&("long_function".into(), 1)));
+    }
+
+    #[test]
+    fn reversed_for_ranges_skip_the_body() {
+        let source = r#"fn scan(limit: i32) {
+            for _ in 8..2 {}
+            for _ in -2..=-5 {}
+            for _ in (0x200_u16..=0b11) {}
+            for _ in 2..8 {}
+            for _ in (2..8).rev() {}
+            for _ in 2..=2 {}
+            for _ in 2..2 {}
+            for _ in 8..limit {}
+            for _ in 257u8..3 {}
+            #[allow(overflowing_literals)] for x in 257..3 { let _: u8 = x; }
+            let _ = 8..2;
+        }"#;
+        assert_eq!(rules_of(source), [2, 3, 4].map(|line| ("reversed_for_range".to_owned(), line)));
     }
 
     #[test]

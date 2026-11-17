@@ -320,6 +320,19 @@ pub static RULES: &[RuleInfo] = &[
     },
     // ---------------------------------------------------------------- quality
     RuleInfo {
+        id: "reversed_for_range",
+        category: Category::Quality,
+        severity: Severity::Medium,
+        title: "For loop over an empty reversed integer range",
+        why: "The literal start exceeds the end. Both half-open and inclusive integer ranges iterate upward, so the loop body executes zero times.",
+        keep: "An intentionally empty loop is part of a fixture or compile-time check.",
+        minimal: "For descending traversal, choose the intended first and last elements and call .rev() on their ascending range.",
+        structural: "Accept an iterator when callers already control traversal order.",
+        verify: &[V_TEST, "Assert the exact sequence visited, including both boundaries."],
+        reference: "references/verification.md",
+        characterize_first: true,
+    },
+    RuleInfo {
         id: "unwrap_in_non_test",
         category: Category::Quality,
         severity: Severity::Info,
