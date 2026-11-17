@@ -4,7 +4,12 @@ description: Design, audit and incrementally refactor Rust with evidence-based a
 metadata:
   version: 1.3.1
   hermes:
-    tags: [rust, architecture, refactoring, performance, code-review]
+    tags:
+      - rust
+      - architecture
+      - refactoring
+      - performance
+      - code-review
 ---
 
 # Rust engineering guardrails
