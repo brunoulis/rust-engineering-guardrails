@@ -16,6 +16,22 @@ cargo build --release --timings
 
 Caveats: `--all-features` may be impossible when mutually exclusive features or target constraints exist; choose valid feature combinations. `-D warnings` is strict and may surface existing debt; don't silently disable it or claim success. `cargo build --timings` is optional and for compile-time analysis. Test performance in release mode with representative inputs.
 
+## Verification matrix
+
+Attribute each result to the contract and actual selection, using this documentary matrix in the [handoff](agent-workflow.md#standard-deliverable) or [refactor record](../templates/refactor-plan.md). It requires no new auditor fields.
+
+| Contract/scenario | Dimension (built / tested / integration / release) | Package/test kind, valid features/cfg, target/profile/runtime and artifact identity | Exact command/job | Selected / executed / passed / failed / skipped / disabled | Result (PASS/FAIL/UNVERIFIED/N/A), reason | Evidence location, date and candidate freshness |
+| --- | --- | --- | --- | --- | --- | --- |
+| | | | | | | |
+
+- Record workspace member/package, unit/integration/doc/ignored test selection, default/no-default/explicit feature set, relevant cfg, target triple, toolchain/MSRV, profile, actual execution host/runtime and artifact identity as applicable. Exercise valid supported combinations; `--all-features` does not replace incompatible combinations or supported feature-off paths. Cross-compiling proves a build only, never execution on that target.
+- Inspect runner summaries as well as exit status. Zero selected/executed, all ignored/skipped/disabled, unavailable tests, or stale logs leave the behavioral contract **UNVERIFIED**, even with exit zero. Preserve an actual runner failure as **FAIL** and report its separate verification gap. Counts unavailable from the runner stay unknown; non-test rows use N/A. Filtered-out tests are not executed, and listing tests alone is inventory evidence.
+- Tie logs to base/candidate revision or dirty diff identity, command/job, configuration, artifact and date. Reuse evidence only when the relevant code and selection remain unchanged and that relationship is established. Prior green output alone is not candidate evidence. A current nonempty passing selection verifies only the contracts it actually exercises; record partial coverage and outstanding required checks.
+- For bugfixes, identify the same regression failing before and passing after, with both identities; if unsafe/unavailable, record why and the limit. Characterization and new-feature checks state their own objective. An unchanged signature does not verify semantics, encoding, serialization, generated code or real consumer compatibility.
+- Keep built, tested, integration and release claims separate. Debug tests do not establish a different release artifact's behavior; release remains UNVERIFIED until applicable release checks actually run and its identity/configuration match. An inaccessible consumer remains UNVERIFIED; use justified N/A only when no such contract applies. Auditor recommendations marked not_run are plans, never executed results.
+
+Example assessment: `cargo test -p service missing_cancel_case` exits zero and reports zero executed; cancellation is UNVERIFIED. A default-feature test pass cannot verify a changed `#[cfg(feature = "retry")]` branch when `retry` is off, nor prove supported `--no-default-features` behavior. Obtain the relevant nonempty selection and runtime evidence rather than widening claims from the command exit.
+
 Useful optional tools (do not assume installed): `cargo nextest`, `cargo llvm-cov`, `cargo deny`, `cargo audit`, `cargo machete`, `cargo bloat`, `cargo flamegraph`, `cargo miri`, `cargo fuzz` (libFuzzer), `proptest` (property tests), `cargo-mutants` (mutation testing), `dhat`/`dhat-rs` (heap traces), `turmoil` (simulated async networks), `kani` (bounded model checking), and Loom (concurrency model tests). Miri and some tools need compatible toolchains or dependencies. Pick one that tests the claim, not a kitchen sink by default.
 
 ## Clippy policy

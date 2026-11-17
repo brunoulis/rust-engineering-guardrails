@@ -8,11 +8,15 @@ For each queue, task group, thread pool and buffer, identify: maximum in-flight 
 
 For CPU-bound work use a bounded worker/concurrency design. `available_parallelism()` is a useful starting hint, not a universal ideal worker count: profile reserved cores, memory bandwidth, CPU quotas, and latency-sensitive tasks. Avoid spawning an OS thread per tick/frame and avoid assuming `tokio::spawn` is free.
 
+Trace blocking/CPU work from its reachable caller to the actual executor under the selected features/target/runtime. For `spawn_blocking` or an existing dedicated pool, inspect admission before submission, queue/in-flight bounds, saturation, competing users and worker budget. Retain correctly isolated work when it meets the contract; adding a second pool or wrapping an already isolated call needs evidence. See [contextual logging review](concurrency.md#reachable-runtime-and-logging-context) for sink blocking and log frequency.
+
 ## 2. Cancellation and partial side effects
 
 `tokio::select!` cancels losing branches by dropping their futures. Examine cancellation safety at each `.await`: could dropping this future lose a message, abandon a transaction mid-flight, retain a lock/resource, partially write a frame, or leave external side effects with ambiguous completion? Distinguish cancellation of a future from termination of separately spawned tasks.
 
 Use a cancellation/shutdown mechanism that matches lifecycle (e.g. token or shared signal) and track spawned tasks when graceful drain matters. During shutdown: reject new work, signal consumers/producers, flush durable state within time budget, join/trap failures, and report partial completion. Avoid fire-and-forget where correctness depends on finishing.
+
+A timeout or dropping/aborting a waiting handle does not establish termination of already running blocking work. Record task/resource ownership, cooperative stop behavior, completion/join or isolation, partial side effects and capacity recovery; exercise the relevant consumer shutdown/error path. New flags, retry caches or timers need an owner, invalidation/reset and cancel/join/drop behavior in the [change surface](agent-workflow.md#standard-deliverable).
 
 ## 3. Locking and safety
 

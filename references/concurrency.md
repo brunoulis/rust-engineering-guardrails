@@ -22,6 +22,12 @@ Keep a short synchronous mutex section without await when contention is acceptab
 - Whether a worker pool starves the latency-sensitive simulation/core thread on a small machine.
 - Shared cache access and deterministic order: concurrency may change event sequence even if all operations are data-race safe.
 
+## Reachable runtime and logging context
+
+Trace the actual caller, target/features/cfg and runtime before classifying a blocking operation. Record whether synchronous I/O/CPU work reaches an async worker, its duration/frequency, locks held across calls or await, and the actual isolation/admission path. Work already isolated in a bounded worker can remain; a short synchronous lock without await and acceptable contention is a valid counterexample. The presence of `spawn_blocking` alone establishes neither a defect nor sufficient isolation: inspect pool saturation, queued/in-flight work, cancellation and shutdown via [async reliability](async-reliability.md).
+
+For logs in affected paths record activation (level, feature, sampling/throttle), reachable event rate/cardinality, formatting/allocation, sink behavior (sync/async, buffering/backpressure), and sensitive data exposure. A per-event log in an unbounded stream is a risk to investigate with workload/sink evidence; a rare failure log or effective throttling may be legitimate. Debug-only logging is not automatically harmless or a production hot path. State unknown frequency/cost as unknown/UNMEASURED and establish a reproducible consequence before asserting a performance defect. No universal log quota or API-name prohibition applies.
+
 ## Sans-IO pattern
 
 Separate deterministic core (`fn on_event(state: &mut State, event: Event) -> Vec<Action>` or an output buffer) from transport adapters (HTTP, sockets, file). Returning a `Vec<Action>` may allocate; if it is on a measured hot path, consider passing a reusable output buffer. This permits isolated testing, replay, fuzzing and deterministic fixtures.

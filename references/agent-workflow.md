@@ -31,7 +31,8 @@ Inspect the diff and affected call paths. Search for architectural borrow-checke
 appeasement, deep clones/allocations in measured hot paths, temporary invalid
 state from mem::take, unbounded tasks/threads/queues, unsafe/FFI assumptions,
 semantic drift, unjustified crate boundaries, opportunistic reworks, API breakage and false performance claims. For every concern give:
-file:line, mechanism, impact, evidence, severity, and a concrete alternative.
+file:line, reachable trigger, mechanism, impact, evidence, severity, introduced /
+pre-existing / unknown attribution, disposition, and a concrete alternative.
 Distinguish verified problems from hypotheses. Do not assume any API is bad
 merely because it is clone/Arc/RefCell/trait/ECS. Identify missing tests.
 Return GO / GO WITH RISKS / NO-GO and the exact checks that ran.
@@ -39,7 +40,7 @@ Return GO / GO WITH RISKS / NO-GO and the exact checks that ran.
 
 ## Reviewer feedback handling
 
-Triage findings by evidence, not volume. Resolve blockers first; implement corrections; add regression tests; ask an independent agent or fresh pass to verify fixes. Do not let the implementer silently dismiss unresolved findings. Update project rules only with stable generalizable principles, not one-off incident logs.
+Triage findings by evidence, not volume. Resolve blockers first; implement corrections; add regression tests; ask an independent agent or fresh pass to verify fixes. Record corrected/verified, legitimate use, accepted in-scope limit, or investigation pending with evidence and unresolved question. Keep pre-existing debt separate from introduced regressions; neither a severe label nor an untouched file establishes impact or authorizes unrelated repair. Compare first and current solutions when fixes accumulate state, caches, tasks or abstractions; retain each addition only with a contract/lifecycle reason, and reconsider simplification. Do not let the implementer silently dismiss unresolved findings. Update project rules only with stable generalizable principles, not one-off incident logs.
 
 ## Cargo / filesystem hygiene in multi-agent workflows
 
@@ -52,13 +53,24 @@ A Reddit commenter described many duplicate workspaces and large disk-write volu
 
 ## Standard deliverable
 
-```
-Mode:
-Invariants/tests:
-Architecture decision + alternative (include crate ADR if relevant):
-Ownership/allocations/concurrency findings:
-Baseline and final measured metrics (or UNMEASURED):
-Commands run and outcomes:
-Independent review findings:
-Remaining risks:
-```
+Scale to risk: a small local comment change can use a short explanation, actual diff validation, remaining uncertainty and justified N/A for state, external consumer and release. Applicable dimensions use the following slots; they do not change auditor output formats. Reuse linked evidence rather than repeating it.
+
+- **Mode/scope:** intent/invariants; base/candidate revisions, dirty diff identity and compared range; observed inventory/exclusions versus inferred execution paths.
+- **Architecture decision + alternative:** include crate ADR when relevant. First solution → current revisions: added/removed state, dependencies, abstractions and lifecycle rules, motivating review findings and why retained; compare simplification/local/structural options. Name the starting proposal if no prior revision exists.
+
+| Existing/new file | Why changed | Behavior/contract before → after | Affected consumer/path | Verification evidence or gap |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+- **State/resources:** new/changed state → owner/mutator → invalidation/reset/cancel/join/drop, necessity and failure/shutdown behavior, or justified N/A. Include effects of changed `Arc`, locks, caches and tasks without treating the syntax as a defect.
+- **Regression surface:** affected scenarios and denominator if known, inferred versus exercised paths; bug case failing before/passing after with both identities/evidence or unavailable/unsafe reason and limit. Characterization/new-feature checks state their different objective. Supported feature-off/cfg/other target behavior: evidence, intentional authorized change, or UNVERIFIED.
+- **Ownership/allocations/concurrency:** reachable runtime/blocking context, locks/await, pool admission/saturation and cancellation; for changed logs, activation/frequency/sink and observed or unknown cost. See [concurrency](concurrency.md) and [async reliability](async-reliability.md).
+- **Validation:** fill the [verification matrix](verification.md#verification-matrix), including counts, evidence freshness and each required outstanding check. Recommendations from the auditor remain not_run until executed.
+- **Distribution, when applicable:** effective dependency versions/git/path/[patch] sources and reasons; toolchain/features/target/profile, built/linked/loaded artifact identities and actual consumer, connecting test/release evidence or marking gaps UNVERIFIED. See [supply chain](../policies/security-supply-chain.md) and [FFI](ffi.md); otherwise justified N/A.
+- **Baseline/final measured metrics:** representative workload/environment and results, or UNMEASURED.
+
+| Finding/path | Trigger and consequence | Severity/confidence | Attribution (introduced / pre-existing / unknown) | Evidence | Disposition and reason |
+| --- | --- | --- | --- | --- | --- |
+| | | | | | |
+
+- **Review/remaining risks:** reviewer/source and candidate reviewed, actual checks, unresolved required checks, accepted limits and rollback. Identify self-review/documentary evaluation as such; review count does not prove closure.
