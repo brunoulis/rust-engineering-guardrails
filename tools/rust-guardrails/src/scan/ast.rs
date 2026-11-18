@@ -332,6 +332,24 @@ fn without_parens(mut expr: &Expr) -> &Expr {
     expr
 }
 
+fn discarded_async_block(stmt: &syn::Stmt, include_tests: bool) -> Option<&syn::ExprAsync> {
+    let mut expr = match stmt {
+        syn::Stmt::Expr(expr, Some(_)) => expr,
+        syn::Stmt::Local(local) if matches!(local.pat, syn::Pat::Wild(_)) && (include_tests || !is_test_attr(&local.attrs)) => &local.init.as_ref()?.expr,
+        _ => return None,
+    };
+    while let Expr::Paren(paren) = expr {
+        if !include_tests && is_test_attr(&paren.attrs) {
+            return None;
+        }
+        expr = &paren.expr;
+    }
+    match expr {
+        Expr::Async(block) if include_tests || !is_test_attr(&block.attrs) => Some(block),
+        _ => None,
+    }
+}
+
 fn range_integer(expr: &Expr) -> Option<(i128, &str)> {
     let (negative, literal) = match without_parens(expr) {
         Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) => (true, without_parens(&unary.expr)),
@@ -595,6 +613,9 @@ impl<'ast> Visit<'ast> for Visitor<'_> {
     fn visit_stmt(&mut self, s: &'ast syn::Stmt) {
         let saved = self.stmt_line;
         self.stmt_line = s.span().start().line;
+        if let Some(block) = discarded_async_block(s, self.include_tests) {
+            self.push("discarded_async_block", line_of(block.async_token.span), None);
+        }
         visit::visit_stmt(self, s);
         self.stmt_line = saved;
     }
@@ -1128,6 +1149,23 @@ fn t2() { None::<u8>.unwrap(); }
             let _ = 8..2;
         }"#;
         assert_eq!(rules_of(source), [2, 3, 4].map(|line| ("reversed_for_range".to_owned(), line)));
+    }
+
+    #[test]
+    fn discarded_async_blocks_are_never_polled() {
+        let src = r#"async fn scan() {
+            async { record(); };
+            let _ = async move { record(); };
+            (async { record(); });
+            let future = async { record(); };
+            future.await;
+            async { record(); }.await;
+            spawn(async { record(); });
+            #[cfg(test)] let _ = async { record(); };
+            #[cfg(test)] async { record(); };
+        }
+        fn make() -> impl Future<Output=()> { async { record(); } }"#;
+        assert_eq!(rules_of(src), [2, 3, 4].map(|n| ("discarded_async_block".to_owned(), n)));
     }
 
     #[test]
